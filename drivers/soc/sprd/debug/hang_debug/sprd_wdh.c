@@ -334,7 +334,7 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 		str[sizeof(str) - 1] = '\0';
 		for (j = 0; j < 8; j++) {
 			u32	data;
-			if (probe_kernel_address(p, data)) {
+			if (get_kernel_nofault(data, p)) {
 				sprintf(str + j * 9, " ********");
 			} else {
 				sprintf(str + j * 9, " %08x", data);
