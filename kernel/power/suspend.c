@@ -582,10 +582,7 @@ static int enter_state(suspend_state_t state)
 	if (!mutex_trylock(&system_transition_mutex))
 		return -EBUSY;
 
-#ifdef CONFIG_ENABLE_SPRD_DEEP_SLEEP_TRACING
-	sprd_system_deep_state_enter(SPRD_DEEP_STATE_SUSPEND_ON_GOING);
-#endif
-
+	pm_wakeup_clear(0);
 	if (state == PM_SUSPEND_TO_IDLE)
 		s2idle_begin();
 
