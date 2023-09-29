@@ -1182,7 +1182,10 @@ struct snd_soc_pcm_runtime {
 	unsigned int pop_wait:1;
 	unsigned int fe_compr:1; /* for Dynamic PCM */
 
-	ANDROID_KABI_RESERVE(1);
+	bool initialized;
+
+	int num_components;
+	struct snd_soc_component *components[]; /* CPU/Codec/Platform */
 };
 #define for_each_rtd_codec_dai(rtd, i, dai)\
 	for ((i) = 0;						       \
