@@ -337,8 +337,8 @@ static void f2fs_write_end_io(struct bio *bio)
 		dec_page_count(sbi, type);
 
 		/*
-		 * sbi must be accessed before end_page_writeback(), which can
-		 * let umount (kill_f2fs_super()) free it under us.
+		 * we should access sbi before end_page_writeback() to
+		 * avoid racing w/ kill_f2fs_super()
 		 */
 		if (type == F2FS_WB_CP_DATA && !get_pages(sbi, type) &&
 				wq_has_sleeper(&sbi->cp_wait))
