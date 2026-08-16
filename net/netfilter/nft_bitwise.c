@@ -15,7 +15,15 @@
 #include <net/netfilter/nf_tables.h>
 #include <net/netfilter/nf_tables_offload.h>
 
+enum nft_bitwise_ops {
+	NFT_BITWISE_BOOL,
+	NFT_BITWISE_LSHIFT,
+	NFT_BITWISE_RSHIFT,
+};
+
 struct nft_bitwise {
+	enum nft_bitwise_ops	op;
+	struct nft_data		data;
 	u8			sreg;
 	u8			dreg;
 	u8			len;
