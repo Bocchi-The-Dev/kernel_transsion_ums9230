@@ -777,6 +777,7 @@ static int __ip6_tnl_rcv(struct ip6_tnl *tunnel, struct sk_buff *skb,
 	struct pcpu_sw_netstats *tstats;
 	const struct ipv6hdr *ipv6h = ipv6_hdr(skb);
 	int err;
+	int nh;
 
 	if ((!(tpi->flags & TUNNEL_CSUM) &&
 	     (tunnel->parms.i_flags & TUNNEL_CSUM)) ||
@@ -815,7 +816,7 @@ static int __ip6_tnl_rcv(struct ip6_tnl *tunnel, struct sk_buff *skb,
 		skb->dev = tunnel->dev;
 	}
 
-	int nh = skb_network_offset(skb);
+	nh = skb_network_offset(skb);
 	skb_reset_network_header(skb);
 
 	if (!skb_vlan_inet_prepare(skb)) {
@@ -1224,7 +1225,6 @@ route_lookup:
 	}
 
 	skb_push(skb, sizeof(struct ipv6hdr));
-	int nh = skb_network_offset(skb);
 	skb_reset_network_header(skb);
 	ipv6h = ipv6_hdr(skb);
 	ip6_flow_hdr(ipv6h, dsfield,
