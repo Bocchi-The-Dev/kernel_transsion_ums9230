@@ -815,11 +815,12 @@ static int __ip6_tnl_rcv(struct ip6_tnl *tunnel, struct sk_buff *skb,
 		skb->dev = tunnel->dev;
 	}
 
+	int nh = skb_network_offset(skb);
 	skb_reset_network_header(skb);
 
-	if (!skb_vlan_inet_prepare(skb, true)) {
-		DEV_STATS_INC(tunnel->dev, rx_length_errors);
-		DEV_STATS_INC(tunnel->dev, rx_errors);
+	if (!skb_vlan_inet_prepare(skb)) {
+		tunnel->dev->stats.rx_length_errors++;
+		tunnel->dev->stats.rx_errors++;
 		goto drop;
 	}
 
@@ -1223,6 +1224,7 @@ route_lookup:
 	}
 
 	skb_push(skb, sizeof(struct ipv6hdr));
+	int nh = skb_network_offset(skb);
 	skb_reset_network_header(skb);
 	ipv6h = ipv6_hdr(skb);
 	ip6_flow_hdr(ipv6h, dsfield,
