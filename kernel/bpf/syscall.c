@@ -129,7 +129,7 @@ static struct bpf_map *find_and_alloc_map(union bpf_attr *attr)
 	return map;
 }
 
-void *bpf_map_area_alloc(u64 size, int numa_node)
+static void *__bpf_map_area_alloc(u64 size, int numa_node, bool mmapable)
 {
 	/* We really just want to fail instead of triggering OOM killer
 	 * under memory pressure, therefore we set __GFP_NORETRY to kmalloc,
@@ -140,23 +140,40 @@ void *bpf_map_area_alloc(u64 size, int numa_node)
 	 * to reclaim memory from the page cache, thus we set
 	 * __GFP_RETRY_MAYFAIL to avoid such situations.
 	 */
-
-	const gfp_t flags = __GFP_NOWARN | __GFP_ZERO;
+	const gfp_t gfp = __GFP_NOWARN | __GFP_ZERO;
+	unsigned int flags = 0;
+	unsigned long align = 1;
 	void *area;
 
 	if (size >= SIZE_MAX)
 		return NULL;
 
-	if (size <= (PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER)) {
-		area = kmalloc_node(size, GFP_USER | __GFP_NORETRY | flags,
+	/* kmalloc()'ed memory can't be mmap()'ed */
+	if (mmapable) {
+		BUG_ON(!PAGE_ALIGNED(size));
+		align = PAGE_SIZE;
+		flags = VM_USERMAP;
+	} else if (size <= (PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER)) {
+		area = kmalloc_node(size, GFP_USER | __GFP_NORETRY | gfp,
 				    numa_node);
 		if (area != NULL)
 			return area;
 	}
 
-	return __vmalloc_node_flags_caller(size, numa_node,
-					   GFP_KERNEL | __GFP_RETRY_MAYFAIL |
-					   flags, __builtin_return_address(0));
+	return __vmalloc_node_range(size, align, VMALLOC_START, VMALLOC_END,
+				    GFP_KERNEL | __GFP_RETRY_MAYFAIL | gfp,
+				    PAGE_KERNEL, flags, numa_node,
+				    __builtin_return_address(0));
+}
+
+void *bpf_map_area_alloc(u64 size, int numa_node)
+{
+	return __bpf_map_area_alloc(size, numa_node, false);
+}
+
+void *bpf_map_area_mmapable_alloc(u64 size, int numa_node)
+{
+	return __bpf_map_area_alloc(size, numa_node, true);
 }
 
 void bpf_map_area_free(void *area)
@@ -435,12 +452,18 @@ static int bpf_map_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct bpf_map *map = filp->private_data;
 	int err;
 
-	if (!map->ops->map_mmap)
+	if (!map->ops->map_mmap || map_value_has_spin_lock(map))
 		return -ENOTSUPP;
+
+	if (!(vma->vm_flags & VM_SHARED))
+		return -EINVAL;
 
 	if (vma->vm_flags & VM_WRITE) {
 		if (map->frozen)
 			return -EPERM;
+		/* map is meant to be read-only from the program side */
+		if (map->map_flags & BPF_F_RDONLY_PROG)
+			return -EACCES;
 	} else {
 		vma->vm_flags &= ~VM_MAYWRITE;
 	}
@@ -448,6 +471,7 @@ static int bpf_map_mmap(struct file *filp, struct vm_area_struct *vma)
 	if (map->frozen)
 		vma->vm_flags &= ~VM_MAYWRITE;
 
+	vma->vm_flags &= ~VM_MAYEXEC;
 	err = map->ops->map_mmap(map, vma);
 	return err;
 }

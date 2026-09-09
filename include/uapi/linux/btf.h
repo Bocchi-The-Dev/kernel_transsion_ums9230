@@ -33,17 +33,17 @@ struct btf_type {
 	/* "info" bits arrangement
 	 * bits  0-15: vlen (e.g. # of struct's members)
 	 * bits 16-23: unused
-	 * bits 24-27: kind (e.g. int, ptr, array...etc)
-	 * bits 28-30: unused
+	 * bits 24-28: kind (e.g. int, ptr, array...etc)
+	 * bits 29-30: unused
 	 * bit     31: kind_flag, currently used by
 	 *             struct, union and fwd
 	 */
 	__u32 info;
-	/* "size" is used by INT, ENUM, STRUCT, UNION and DATASEC.
+	/* "size" is used by INT, ENUM, STRUCT, UNION, DATASEC and FLOAT.
 	 * "size" tells the size of the type it is describing.
 	 *
 	 * "type" is used by PTR, TYPEDEF, VOLATILE, CONST, RESTRICT,
-	 * FUNC, FUNC_PROTO and VAR.
+	 * FUNC, FUNC_PROTO, VAR, DECL_TAG and TYPE_TAG.
 	 * "type" is a type_id referring to another type.
 	 */
 	union {
@@ -52,7 +52,7 @@ struct btf_type {
 	};
 };
 
-#define BTF_INFO_KIND(info)	(((info) >> 24) & 0x0f)
+#define BTF_INFO_KIND(info)	(((info) >> 24) & 0x1f)
 #define BTF_INFO_VLEN(info)	((info) & 0xffff)
 #define BTF_INFO_KFLAG(info)	((info) >> 31)
 
@@ -72,7 +72,11 @@ struct btf_type {
 #define BTF_KIND_FUNC_PROTO	13	/* Function Proto	*/
 #define BTF_KIND_VAR		14	/* Variable	*/
 #define BTF_KIND_DATASEC	15	/* Section	*/
-#define BTF_KIND_MAX		BTF_KIND_DATASEC
+#define BTF_KIND_FLOAT		16	/* Floating point	*/
+#define BTF_KIND_DECL_TAG	17	/* Decl Tag 		*/
+#define BTF_KIND_TYPE_TAG	18	/* Type Tag		*/
+#define BTF_KIND_ENUM64		19	/* Enumeration up to 64 bits	*/
+#define BTF_KIND_MAX		BTF_KIND_ENUM64
 #define NR_BTF_KINDS		(BTF_KIND_MAX + 1)
 
 /* For some specific BTF_KIND, "struct btf_type" is immediately
@@ -160,6 +164,24 @@ struct btf_var_secinfo {
 	__u32	type;
 	__u32	offset;
 	__u32	size;
+};
+
+/* BTF_KIND_DECL_TAG is followed by a single "struct btf_decl_tag" to describe
+ * additional information related to the tag applied to struct members or
+ * func proto args.
+ */
+struct btf_decl_tag {
+	__s32	component_idx;
+};
+
+/* BTF_KIND_ENUM64 is followed by multiple "struct btf_enum64".
+ * The exact number of btf_enum64 is stored in the vlen (of the
+ * info in "struct btf_type").
+ */
+struct btf_enum64 {
+	__u32	name_off;
+	__u32	val_lo32;
+	__u32	val_hi32;
 };
 
 #endif /* _UAPI__LINUX_BTF_H__ */
