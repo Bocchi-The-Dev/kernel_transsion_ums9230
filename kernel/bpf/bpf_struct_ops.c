@@ -180,7 +180,7 @@ void bpf_struct_ops_init(struct btf *btf, struct bpf_verifier_log *log)
 			}
 		}
 
-		if (j == btf_type_vlen(t)) {
+		if (j == btf_type_vlen(t) && st_ops->init) {
 			if (st_ops->init(btf)) {
 				pr_warn("Error in init bpf_struct_ops %s\n",
 					st_ops->name);
