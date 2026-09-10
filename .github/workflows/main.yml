@@ -21,8 +21,8 @@ jobs:
 
       - name: Build Image
         run: |
-          make LLVM=1 LLVM_IAS=1 O="out" unisoc_defconfig
-          make LLVM=1 LLVM_IAS=1 O="out" -j$(nproc) Image
+          make LLVM_IAS=1 O="out" unisoc_defconfig
+          make LLVM_IAS=1 O="out" -j$(nproc) Image
 
       - name: Upload build output
         uses: actions/upload-artifact@v4
