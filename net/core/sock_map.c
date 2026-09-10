@@ -802,6 +802,16 @@ out:
 	return ret;
 }
 
+int sock_map_update_elem_sys(struct bpf_map *map, void *key, void *value,
+			     u64 flags)
+{
+	if (map->map_type == BPF_MAP_TYPE_SOCKMAP)
+		return sock_map_update_elem(map, key, value, flags);
+	if (map->map_type == BPF_MAP_TYPE_SOCKHASH)
+		return sock_hash_update_elem(map, key, value, flags);
+	return -EOPNOTSUPP;
+}
+
 static int sock_hash_get_next_key(struct bpf_map *map, void *key,
 				  void *key_next)
 {

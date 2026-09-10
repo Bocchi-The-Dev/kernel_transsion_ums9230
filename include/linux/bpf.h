@@ -1448,6 +1448,8 @@ struct sk_buff;
 struct bpf_dtab_netdev *__dev_map_lookup_elem(struct bpf_map *map, u32 key);
 struct bpf_dtab_netdev *__dev_map_hash_lookup_elem(struct bpf_map *map, u32 key);
 void __dev_flush(void);
+/* Helix 5.4 devmap flushes one map; Lineage renamed this to __dev_flush(). */
+void __dev_map_flush(struct bpf_map *map);
 int dev_xdp_enqueue(struct net_device *dev, struct xdp_buff *xdp,
 		    struct net_device *dev_rx);
 int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp,
@@ -1461,6 +1463,31 @@ void __cpu_map_flush(struct bpf_map *map);
 int cpu_map_enqueue(struct bpf_cpu_map_entry *rcpu, struct xdp_buff *xdp,
 		    struct net_device *dev_rx);
 bool cpu_map_prog_allowed(struct bpf_map *map);
+
+#if defined(CONFIG_XDP_SOCKETS)
+struct xdp_sock;
+struct xdp_sock *__xsk_map_lookup_elem(struct bpf_map *map, u32 key);
+int __xsk_map_redirect(struct bpf_map *map, struct xdp_buff *xdp,
+		       struct xdp_sock *xs);
+void __xsk_map_flush(struct bpf_map *map);
+#else
+struct xdp_sock;
+static inline struct xdp_sock *__xsk_map_lookup_elem(struct bpf_map *map,
+						     u32 key)
+{
+	return NULL;
+}
+
+static inline int __xsk_map_redirect(struct bpf_map *map, struct xdp_buff *xdp,
+				     struct xdp_sock *xs)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline void __xsk_map_flush(struct bpf_map *map)
+{
+}
+#endif
 
 /* Return map's numa specified by userspace */
 static inline int bpf_map_attr_numa_node(const union bpf_attr *attr)
@@ -1618,6 +1645,10 @@ static inline void __dev_flush(void)
 {
 }
 
+static inline void __dev_map_flush(struct bpf_map *map)
+{
+}
+
 struct xdp_buff;
 struct bpf_dtab_netdev;
 
@@ -1665,6 +1696,25 @@ static inline bool cpu_map_prog_allowed(struct bpf_map *map)
 {
 	return false;
 }
+
+#if defined(CONFIG_XDP_SOCKETS)
+struct xdp_sock;
+static inline struct xdp_sock *__xsk_map_lookup_elem(struct bpf_map *map,
+						     u32 key)
+{
+	return NULL;
+}
+
+static inline int __xsk_map_redirect(struct bpf_map *map, struct xdp_buff *xdp,
+				     struct xdp_sock *xs)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline void __xsk_map_flush(struct bpf_map *map)
+{
+}
+#endif
 
 static inline struct bpf_prog *bpf_prog_get_type_path(const char *name,
 				enum bpf_prog_type type)
