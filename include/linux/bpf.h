@@ -1245,7 +1245,7 @@ struct bpf_prog *bpf_prog_get_type_dev(u32 ufd, enum bpf_prog_type type,
 				       bool attach_drv);
 void bpf_prog_add(struct bpf_prog *prog, int i);
 void bpf_prog_sub(struct bpf_prog *prog, int i);
-void bpf_prog_inc(struct bpf_prog *prog);
+struct bpf_prog * __must_check bpf_prog_inc(struct bpf_prog *prog);
 struct bpf_prog * __must_check bpf_prog_inc_not_zero(struct bpf_prog *prog);
 void bpf_prog_put(struct bpf_prog *prog);
 int __bpf_prog_charge(struct user_struct *user, u32 pages);
@@ -1457,7 +1457,7 @@ int dev_map_generic_redirect(struct bpf_dtab_netdev *dst, struct sk_buff *skb,
 bool dev_map_can_have_prog(struct bpf_map *map);
 
 struct bpf_cpu_map_entry *__cpu_map_lookup_elem(struct bpf_map *map, u32 key);
-void __cpu_map_flush(void);
+void __cpu_map_flush(struct bpf_map *map);
 int cpu_map_enqueue(struct bpf_cpu_map_entry *rcpu, struct xdp_buff *xdp,
 		    struct net_device *dev_rx);
 bool cpu_map_prog_allowed(struct bpf_map *map);
@@ -1544,8 +1544,9 @@ static inline void bpf_prog_put(struct bpf_prog *prog)
 {
 }
 
-static inline void bpf_prog_inc(struct bpf_prog *prog)
+static inline struct bpf_prog * __must_check bpf_prog_inc(struct bpf_prog *prog)
 {
+	return ERR_PTR(-EOPNOTSUPP);
 }
 
 static inline struct bpf_prog *__must_check
@@ -1649,7 +1650,7 @@ struct bpf_cpu_map_entry *__cpu_map_lookup_elem(struct bpf_map *map, u32 key)
 	return NULL;
 }
 
-static inline void __cpu_map_flush(void)
+static inline void __cpu_map_flush(struct bpf_map *map)
 {
 }
 

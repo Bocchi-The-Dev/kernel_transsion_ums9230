@@ -1896,9 +1896,10 @@ void bpf_prog_sub(struct bpf_prog *prog, int i)
 }
 EXPORT_SYMBOL_GPL(bpf_prog_sub);
 
-void bpf_prog_inc(struct bpf_prog *prog)
+struct bpf_prog *bpf_prog_inc(struct bpf_prog *prog)
 {
 	atomic64_inc(&prog->aux->refcnt);
+	return prog;
 }
 EXPORT_SYMBOL_GPL(bpf_prog_inc);
 
