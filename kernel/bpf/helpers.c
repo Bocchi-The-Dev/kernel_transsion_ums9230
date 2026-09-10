@@ -17,6 +17,12 @@
 #include <linux/proc_ns.h>
 
 #include "../../lib/kstrtox.h"
+#include <linux/ns_common.h>
+
+static inline bool ns_match(struct ns_common *ns, dev_t dev, ino_t ino)
+{
+	return ns && ns->inum == ino;
+}
 
 /* If kernel subsystem is allowing eBPF programs to call this function,
  * inside its own verifier_ops->get_func_proto() callback it should return
@@ -287,7 +293,7 @@ static inline void __bpf_spin_lock_irqsave(struct bpf_spin_lock *lock)
 	__this_cpu_write(irqsave_flags, flags);
 }
 
-NOTRACE_BPF_CALL_1(bpf_spin_lock, struct bpf_spin_lock *, lock)
+notrace BPF_CALL_1(bpf_spin_lock, struct bpf_spin_lock *, lock)
 {
 	__bpf_spin_lock_irqsave(lock);
 	return 0;
@@ -309,7 +315,7 @@ static inline void __bpf_spin_unlock_irqrestore(struct bpf_spin_lock *lock)
 	local_irq_restore(flags);
 }
 
-NOTRACE_BPF_CALL_1(bpf_spin_unlock, struct bpf_spin_lock *, lock)
+notrace BPF_CALL_1(bpf_spin_unlock, struct bpf_spin_lock *, lock)
 {
 	__bpf_spin_unlock_irqrestore(lock);
 	return 0;
@@ -354,7 +360,7 @@ BPF_CALL_0(bpf_get_current_cgroup_id)
 {
 	struct cgroup *cgrp = task_dfl_cgroup(current);
 
-	return cgroup_id(cgrp);
+	return cgrp->kn->id.id;
 }
 
 const struct bpf_func_proto bpf_get_current_cgroup_id_proto = {
@@ -371,7 +377,7 @@ BPF_CALL_1(bpf_get_current_ancestor_cgroup_id, int, ancestor_level)
 	ancestor = cgroup_ancestor(cgrp, ancestor_level);
 	if (!ancestor)
 		return 0;
-	return cgroup_id(ancestor);
+	return ancestor->kn->id.id;
 }
 
 const struct bpf_func_proto bpf_get_current_ancestor_cgroup_id_proto = {
