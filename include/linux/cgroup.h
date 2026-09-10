@@ -595,6 +595,11 @@ static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
 	return cgrp;
 }
 
+static inline u64 cgroup_id(const struct cgroup *cgrp)
+{
+	return cgrp->kn->id.id;
+}
+
 /**
  * task_under_cgroup_hierarchy - test task's membership of cgroup ancestry
  * @task: the task to be tested
