@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/* Backport of BPF ringbuf (upstream 5.8 / helper ABI 5.10) onto 5.4.
- * RINGBUF is map type 27; helpers are 130-134. STRUCT_OPS=26 and
- * seq/sk_cgroup helpers 126-129 are ABI holes and are not implemented.
- */
 #include <linux/bpf.h>
 #include <linux/btf.h>
 #include <linux/err.h>
@@ -14,8 +9,6 @@
 #include <linux/wait.h>
 #include <linux/poll.h>
 #include <linux/kmemleak.h>
-#include <linux/log2.h>
-#include <linux/hardirq.h>
 #include <uapi/linux/btf.h>
 
 #define RINGBUF_CREATE_FLAG_MASK (BPF_F_NUMA_NODE)
@@ -48,14 +41,18 @@ struct bpf_ringbuf {
 	 * mapping consumer page as r/w, but restrict producer page to r/o.
 	 * This protects producer position from being modified by user-space
 	 * application and ruining in-kernel position tracking.
+	 * Note that the pending counter is placed in the same
+	 * page as the producer, so that it shares the same cache line.
 	 */
 	unsigned long consumer_pos __aligned(PAGE_SIZE);
 	unsigned long producer_pos __aligned(PAGE_SIZE);
+	unsigned long pending_pos;
 	char data[] __aligned(PAGE_SIZE);
 };
 
 struct bpf_ringbuf_map {
 	struct bpf_map map;
+	struct bpf_map_memory memory;
 	struct bpf_ringbuf *rb;
 };
 
@@ -67,8 +64,8 @@ struct bpf_ringbuf_hdr {
 
 static struct bpf_ringbuf *bpf_ringbuf_area_alloc(size_t data_sz, int numa_node)
 {
-	const gfp_t flags = GFP_KERNEL_ACCOUNT | __GFP_RETRY_MAYFAIL |
-			    __GFP_NOWARN | __GFP_ZERO;
+	const gfp_t flags = GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_NOWARN |
+			    __GFP_ZERO;
 	int nr_meta_pages = RINGBUF_PGOFF + RINGBUF_POS_PAGES;
 	int nr_data_pages = data_sz >> PAGE_SHIFT;
 	int nr_pages = nr_meta_pages + nr_data_pages;
@@ -85,6 +82,14 @@ static struct bpf_ringbuf *bpf_ringbuf_area_alloc(size_t data_sz, int numa_node)
 	 * ------------------------------------------------------
 	 * |            | 1 2 3 4 5 6 7 8 9 | 1 2 3 4 5 6 7 8 9 |
 	 * ------------------------------------------------------
+	 * |            | TA             DA | TA             DA |
+	 * ------------------------------------------------------
+	 *                               ^^^^^^^
+	 *                                  |
+	 * Here, no need to worry about special handling of wrapped-around
+	 * data due to double-mapped data pages. This works both in kernel and
+	 * when mmap()'ed in user-space, simplifying both kernel and
+	 * user-space implementations significantly.
 	 */
 	array_size = (nr_meta_pages + 2 * nr_data_pages) * sizeof(*pages);
 	if (array_size > PAGE_SIZE)
@@ -143,6 +148,7 @@ static struct bpf_ringbuf *bpf_ringbuf_alloc(size_t data_sz, int numa_node)
 	rb->mask = data_sz - 1;
 	rb->consumer_pos = 0;
 	rb->producer_pos = 0;
+	rb->pending_pos = 0;
 
 	return rb;
 }
@@ -162,6 +168,7 @@ static struct bpf_map *ringbuf_map_alloc(union bpf_attr *attr)
 		return ERR_PTR(-EINVAL);
 
 #ifdef CONFIG_64BIT
+	/* on 32-bit arch, it's impossible to overflow record's hdr->pgoff */
 	if (attr->max_entries > RINGBUF_MAX_DATA_SZ)
 		return ERR_PTR(-E2BIG);
 #endif
@@ -196,6 +203,9 @@ err_free_map:
 
 static void bpf_ringbuf_free(struct bpf_ringbuf *rb)
 {
+	/* copy pages pointer and nr_pages to local variable, as we are going
+	 * to unmap rb itself with vunmap() below
+	 */
 	struct page **pages = rb->pages;
 	int i, nr_pages = rb->nr_pages;
 
@@ -244,13 +254,12 @@ static int ringbuf_map_mmap(struct bpf_map *map, struct vm_area_struct *vma)
 
 	if (vma->vm_flags & VM_WRITE) {
 		/* allow writable mapping for the consumer_pos only */
-		if (vma->vm_pgoff != 0 ||
-		    vma->vm_end - vma->vm_start != PAGE_SIZE)
+		if (vma->vm_pgoff != 0 || vma->vm_end - vma->vm_start != PAGE_SIZE)
 			return -EPERM;
 	} else {
 		vma->vm_flags &= ~VM_MAYWRITE;
 	}
-
+	/* remap_vmalloc_range() checks size and offset constraints */
 	return remap_vmalloc_range(vma, rb_map->rb,
 				   vma->vm_pgoff + RINGBUF_PGOFF);
 }
@@ -277,7 +286,9 @@ static __poll_t ringbuf_map_poll(struct bpf_map *map, struct file *filp,
 	return 0;
 }
 
+static int ringbuf_map_btf_id;
 const struct bpf_map_ops ringbuf_map_ops = {
+	.map_meta_equal = bpf_map_meta_equal,
 	.map_alloc = ringbuf_map_alloc,
 	.map_free = ringbuf_map_free,
 	.map_mmap = ringbuf_map_mmap,
@@ -286,33 +297,47 @@ const struct bpf_map_ops ringbuf_map_ops = {
 	.map_update_elem = ringbuf_map_update_elem,
 	.map_delete_elem = ringbuf_map_delete_elem,
 	.map_get_next_key = ringbuf_map_get_next_key,
+	.map_btf_name = "bpf_ringbuf_map",
+	.map_btf_id = &ringbuf_map_btf_id,
 };
 
+/* Given pointer to ring buffer record metadata and struct bpf_ringbuf itself,
+ * calculate offset from record metadata to ring buffer in pages, rounded
+ * down. This page offset is stored as part of record metadata and allows to
+ * restore struct bpf_ringbuf * from record pointer. This page offset is
+ * stored at offset 4 of record metadata header.
+ */
 static size_t bpf_ringbuf_rec_pg_off(struct bpf_ringbuf *rb,
 				     struct bpf_ringbuf_hdr *hdr)
 {
 	return ((void *)hdr - (void *)rb) >> PAGE_SHIFT;
 }
 
+/* Given pointer to ring buffer record header, restore pointer to struct
+ * bpf_ringbuf itself by using page offset stored at offset 4
+ */
 static struct bpf_ringbuf *
 bpf_ringbuf_restore_from_rec(struct bpf_ringbuf_hdr *hdr)
 {
 	unsigned long addr = (unsigned long)(void *)hdr;
 	unsigned long off = (unsigned long)hdr->pg_off << PAGE_SHIFT;
 
-	return (void *)((addr & PAGE_MASK) - off);
+	return (void*)((addr & PAGE_MASK) - off);
 }
 
 static void *__bpf_ringbuf_reserve(struct bpf_ringbuf *rb, u64 size)
 {
-	unsigned long cons_pos, prod_pos, new_prod_pos, flags;
-	u32 len, pg_off;
+	unsigned long cons_pos, prod_pos, new_prod_pos, pend_pos, flags;
 	struct bpf_ringbuf_hdr *hdr;
+	u32 len, pg_off, tmp_size, hdr_len;
 
 	if (unlikely(size > RINGBUF_MAX_RECORD_SZ))
 		return NULL;
 
 	len = round_up(size + BPF_RINGBUF_HDR_SZ, 8);
+	if (len > rb->mask + 1)
+		return NULL;
+
 	cons_pos = smp_load_acquire(&rb->consumer_pos);
 
 	if (in_nmi()) {
@@ -322,11 +347,29 @@ static void *__bpf_ringbuf_reserve(struct bpf_ringbuf *rb, u64 size)
 		spin_lock_irqsave(&rb->spinlock, flags);
 	}
 
+	pend_pos = rb->pending_pos;
 	prod_pos = rb->producer_pos;
 	new_prod_pos = prod_pos + len;
 
-	/* producer must not advance more than (ringbuf_size - 1) ahead */
-	if (new_prod_pos - cons_pos > rb->mask) {
+	while (pend_pos < prod_pos) {
+		hdr = (void *)rb->data + (pend_pos & rb->mask);
+		hdr_len = READ_ONCE(hdr->len);
+		if (hdr_len & BPF_RINGBUF_BUSY_BIT)
+			break;
+		tmp_size = hdr_len & ~BPF_RINGBUF_DISCARD_BIT;
+		tmp_size = round_up(tmp_size + BPF_RINGBUF_HDR_SZ, 8);
+		pend_pos += tmp_size;
+	}
+	rb->pending_pos = pend_pos;
+
+	/* check for out of ringbuf space:
+	 * - by ensuring producer position doesn't advance more than
+	 *   (ringbuf_size - 1) ahead
+	 * - by ensuring oldest not yet committed record until newest
+	 *   record does not span more than (ringbuf_size - 1)
+	 */
+	if (new_prod_pos - cons_pos > rb->mask ||
+	    new_prod_pos - pend_pos > rb->mask) {
 		spin_unlock_irqrestore(&rb->spinlock, flags);
 		return NULL;
 	}
@@ -376,8 +419,12 @@ static void bpf_ringbuf_commit(void *sample, u64 flags, bool discard)
 	if (discard)
 		new_len |= BPF_RINGBUF_DISCARD_BIT;
 
+	/* update record header with correct final size prefix */
 	xchg(&hdr->len, new_len);
 
+	/* if consumer caught up and is waiting for our record, notify about
+	 * new data availability
+	 */
 	rec_pos = (void *)hdr - (void *)rb->data;
 	cons_pos = smp_load_acquire(&rb->consumer_pos) & rb->mask;
 
@@ -389,7 +436,7 @@ static void bpf_ringbuf_commit(void *sample, u64 flags, bool discard)
 
 BPF_CALL_2(bpf_ringbuf_submit, void *, sample, u64, flags)
 {
-	bpf_ringbuf_commit(sample, flags, false);
+	bpf_ringbuf_commit(sample, flags, false /* discard */);
 	return 0;
 }
 
@@ -402,7 +449,7 @@ const struct bpf_func_proto bpf_ringbuf_submit_proto = {
 
 BPF_CALL_2(bpf_ringbuf_discard, void *, sample, u64, flags)
 {
-	bpf_ringbuf_commit(sample, flags, true);
+	bpf_ringbuf_commit(sample, flags, true /* discard */);
 	return 0;
 }
 
@@ -428,7 +475,7 @@ BPF_CALL_4(bpf_ringbuf_output, struct bpf_map *, map, void *, data, u64, size,
 		return -EAGAIN;
 
 	memcpy(rec, data, size);
-	bpf_ringbuf_commit(rec, flags, false);
+	bpf_ringbuf_commit(rec, flags, false /* discard */);
 	return 0;
 }
 

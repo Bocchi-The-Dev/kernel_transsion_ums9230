@@ -552,7 +552,8 @@ struct bpf_prog {
 				is_func:1,	/* program is a bpf function */
 				kprobe_override:1, /* Do we override a kprobe? */
 				has_callchain_buf:1, /* callchain buffer allocated? */
-				enforce_expected_attach_type:1; /* Enforce expected_attach_type checking at attach time */
+				enforce_expected_attach_type:1, /* Enforce expected_attach_type checking at attach time */
+				call_get_stack:1; /* Do we call bpf_get_stack() or bpf_get_stackid() */
 	enum bpf_prog_type	type;		/* Type of BPF program */
 	enum bpf_attach_type	expected_attach_type; /* For some prog types */
 	u32			len;		/* Number of filter blocks */
@@ -648,6 +649,17 @@ static inline void bpf_jit_set_header_magic(struct bpf_binary_header *hdr)
 		ret = bpf_call_func(prog, ctx);			\
 	}							\
 	ret; })
+
+static inline u32 bpf_prog_run_pin_on_cpu(const struct bpf_prog *prog,
+					  const void *ctx)
+{
+	u32 ret;
+
+	preempt_disable();
+	ret = BPF_PROG_RUN(prog, ctx);
+	preempt_enable();
+	return ret;
+}
 
 #define BPF_SKB_CB_LEN QDISC_CB_PRIV_LEN
 
