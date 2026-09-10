@@ -843,7 +843,12 @@ BPF_CALL_4(bpf_sk_storage_get, struct bpf_map *, map, struct sock *, sk,
 {
 	struct bpf_sk_storage_data *sdata;
 
-	if (flags > BPF_SK_STORAGE_GET_F_CREATE)
+	/* arg2 is ARG_PTR_TO_BTF_ID_SOCK_COMMON, so the verifier admits a
+	 * plain struct sock as well as a fullsock: re-check here, since the
+	 * storage hangs off fields only a fullsock has.
+	 */
+	if (!sk || !sk_fullsock(sk) ||
+	    flags > BPF_SK_STORAGE_GET_F_CREATE)
 		return (unsigned long)NULL;
 
 	sdata = sk_storage_lookup(sk, map, true);
@@ -871,6 +876,10 @@ BPF_CALL_4(bpf_sk_storage_get, struct bpf_map *, map, struct sock *, sk,
 
 BPF_CALL_2(bpf_sk_storage_delete, struct bpf_map *, map, struct sock *, sk)
 {
+	/* See bpf_sk_storage_get(): arg2 admits a plain struct sock. */
+	if (!sk || !sk_fullsock(sk))
+		return -EINVAL;
+
 	if (refcount_inc_not_zero(&sk->sk_refcnt)) {
 		int err;
 
@@ -893,12 +902,17 @@ const struct bpf_map_ops sk_storage_map_ops = {
 	.map_check_btf = bpf_sk_storage_map_check_btf,
 };
 
+/* ARG_PTR_TO_SOCKET would be tighter, but a CGROUP_SKB program reads
+ * skb->sk, which is a PTR_TO_SOCK_COMMON -- rejecting it fails netd's
+ * ingress/egress stats programs outright. Take the sock_common type and
+ * keep the fullsock test at run time instead, as upstream did.
+ */
 const struct bpf_func_proto bpf_sk_storage_get_proto = {
 	.func		= bpf_sk_storage_get,
 	.gpl_only	= false,
 	.ret_type	= RET_PTR_TO_MAP_VALUE_OR_NULL,
 	.arg1_type	= ARG_CONST_MAP_PTR,
-	.arg2_type	= ARG_PTR_TO_SOCKET,
+	.arg2_type	= ARG_PTR_TO_BTF_ID_SOCK_COMMON,
 	.arg3_type	= ARG_PTR_TO_MAP_VALUE_OR_NULL,
 	.arg4_type	= ARG_ANYTHING,
 };
@@ -921,5 +935,5 @@ const struct bpf_func_proto bpf_sk_storage_delete_proto = {
 	.gpl_only	= false,
 	.ret_type	= RET_INTEGER,
 	.arg1_type	= ARG_CONST_MAP_PTR,
-	.arg2_type	= ARG_PTR_TO_SOCKET,
+	.arg2_type	= ARG_PTR_TO_BTF_ID_SOCK_COMMON,
 };
