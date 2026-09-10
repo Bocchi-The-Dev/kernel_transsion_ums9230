@@ -1,0 +1,32 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flex bison bc cpio libssl-dev xz-utils
+
+      - name: Build Image
+        run: |
+          make LLVM=1 LLVM_IAS=1 O="out" unisoc_defconfig
+          make LLVM=1 LLVM_IAS=1 O="out" -j$(nproc) Image
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-Image-${{ github.sha }}
+          path: out/arch/arm64/boot/Image
+          if-no-files-found: warn
