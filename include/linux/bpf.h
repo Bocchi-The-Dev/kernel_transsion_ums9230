@@ -44,6 +44,9 @@ struct seq_operations;
 struct bpf_iter_aux_info;
 struct bpf_local_storage;
 struct bpf_local_storage_map;
+struct bpf_sk_lookup_kern {
+	u8 unused;
+};
 
 extern struct idr btf_idr;
 extern spinlock_t btf_idr_lock;

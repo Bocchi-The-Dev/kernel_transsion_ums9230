@@ -3883,7 +3883,7 @@ static void btf_decl_tag_show(const struct btf *btf, const struct btf_type *t,
 			      struct btf_show *show)
 {
 	btf_show_start_type(show, t, type_id, data);
-	btf_show_type_value(show, "(tag)");
+	btf_show_type_value(show, "%s", "(tag)");
 	btf_show_end_type(show);
 }
 
