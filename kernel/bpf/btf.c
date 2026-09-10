@@ -3196,11 +3196,27 @@ static s32 btf_enum_check_meta(struct btf_verifier_env *env,
 		return -EINVAL;
 	}
 
-	if (btf_type_kflag(t)) {
-		btf_verifier_log_type(env, t, "Invalid btf_info kind_flag");
-		return -EINVAL;
-	}
-
+	/*
+	 * kind_flag on a BTF_KIND_ENUM means the enum is *signed*: its values
+	 * are to be read as s32 rather than u32.  This was added upstream in
+	 * the same series as BTF_KIND_ENUM64, but only the enum64 half was
+	 * backported into this tree, so until now every enum carrying the flag
+	 * was rejected here.
+	 *
+	 * That is fatal, not cosmetic.  pahole >= 1.22 sets the flag for any
+	 * enum with a negative enumerator -- e.g. "enum perf_event_state",
+	 * whose first member is PERF_EVENT_STATE_DEAD = -4 -- so a vmlinux BTF
+	 * produced by a modern pahole can never be parsed.  btf_parse_vmlinux()
+	 * then returns IS_ERR(), bpf_check() gives up with "in-kernel BTF is
+	 * malformed", and every BPF_PROG_LOAD fails with -EINVAL.  That is what
+	 * kept bpfloader, and with it Android, from booting.
+	 *
+	 * Accepting the flag is safe: it changes neither the size nor the
+	 * layout of the type.  struct btf_enum is { __u32 name_off; __s32 val; }
+	 * whether or not the flag is set, so meta_needed below is unaffected,
+	 * and the kernel only ever reads enum values through 'val', which is
+	 * already signed.
+	 */
 	if (t->size > 8 || !is_power_of_2(t->size)) {
 		btf_verifier_log_type(env, t, "Unexpected size");
 		return -EINVAL;
