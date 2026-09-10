@@ -651,3 +651,10 @@ void bpf_struct_ops_put(const void *kdata)
 		bpf_map_put(&st_map->map);
 	}
 }
+
+#ifdef CONFIG_INET
+/* Helix 5.4 has no net/ipv4/bpf_tcp_ca.c; provide a weak placeholder. */
+struct bpf_struct_ops bpf_tcp_congestion_ops __weak = {
+	.name = "tcp_congestion_ops",
+};
+#endif

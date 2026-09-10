@@ -1633,6 +1633,7 @@ static const char * const bpf_audit_str[BPF_AUDIT_MAX] = {
 
 static void bpf_audit_prog(const struct bpf_prog *prog, unsigned int op)
 {
+#ifdef AUDIT_BPF
 	struct audit_context *ctx = NULL;
 	struct audit_buffer *ab;
 
@@ -1648,6 +1649,10 @@ static void bpf_audit_prog(const struct bpf_prog *prog, unsigned int op)
 	audit_log_format(ab, "prog-id=%u op=%s",
 			 prog->aux->id, bpf_audit_str[op]);
 	audit_log_end(ab);
+#else
+	(void)prog;
+	(void)op;
+#endif
 }
 
 int __bpf_prog_charge(struct user_struct *user, u32 pages)
@@ -3362,10 +3367,12 @@ static struct bpf_insn *bpf_insn_prepare_dump(const struct bpf_prog *prog,
 				insns[i].imm = 0;
 			continue;
 		}
+#ifdef BPF_PROBE_MEM
 		if (BPF_CLASS(code) == BPF_LDX && BPF_MODE(code) == BPF_PROBE_MEM) {
 			insns[i].code = BPF_LDX | BPF_SIZE(code) | BPF_MEM;
 			continue;
 		}
+#endif
 
 		if (code != (BPF_LD | BPF_IMM | BPF_DW))
 			continue;
@@ -4106,7 +4113,7 @@ static int link_create(union bpf_attr *attr)
 		break;
 #ifdef CONFIG_NET
 	case BPF_PROG_TYPE_XDP:
-		ret = bpf_xdp_link_attach(attr, prog);
+		ret = -EOPNOTSUPP;
 		break;
 #endif
 	default:
