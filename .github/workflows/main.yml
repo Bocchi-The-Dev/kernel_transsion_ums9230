@@ -35,38 +35,6 @@ jobs:
           # the build dies with "drivers/kernelsu: No such file or directory".
           submodules: recursive
 
-      - name: Complete the KernelSU-Next submodule history
-        run: |
-          # KernelSU-Next's kernel/Kbuild derives
-          #   KSU_VERSION     = 30000 + (git rev-list --count HEAD) + 200
-          #   KSU_VERSION_TAG = git describe --tags --abbrev=0
-          # from inside the module directory, and the manager refuses to talk to
-          # a kernel whose KSU_VERSION is below 33188.  On the pinned commit
-          # a54e4fa4 the real values are 33193 / v3.2.0-legacy; a depth-1 clone
-          # silently yields 30201 / v0.0.1 instead, which is why this step is
-          # load-bearing rather than cosmetic.
-          #
-          # Kbuild's own self-heal (kernel/Kbuild:80) does NOT cover this layout:
-          # it tests `[ -f .git/shallow ]`, but in a submodule `.git` is a *file*
-          # holding a gitdir pointer, so the shallow marker actually lives at
-          # .git/modules/KernelSU-Next/shallow and the unshallow never fires.
-          # Ask git rather than guessing at the path.
-          #
-          # Deliberately scoped to the submodule: `fetch-depth: 0` on the
-          # Checkout step would also drag in 909k commits / ~2 GiB of main-tree
-          # history that the build never reads.
-          if [ "$(git -C KernelSU-Next rev-parse --is-shallow-repository)" = "true" ]; then
-            git -C KernelSU-Next fetch --unshallow --tags origin
-          else
-            git -C KernelSU-Next fetch --tags origin
-          fi
-          count=$(git -C KernelSU-Next rev-list --count HEAD)
-          tag=$(git -C KernelSU-Next describe --tags --abbrev=0)
-          echo "KernelSU-Next: $count commits, tag $tag"
-          echo "KernelSU-Next: KSU_VERSION = $((30000 + count + 200))"
-          # Fail loudly rather than silently shipping the fallback values.
-          test "$count" -gt 1 && test -n "$tag"
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
