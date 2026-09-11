@@ -6440,3 +6440,6 @@ CONFIG_CORESIGHT_STM=y
 # CONFIG_SPRD_SHARKL6PRO_CORESIGHT_PHY is not set
 # end of Coresight Physical Layer drivers
 # end of Kernel hacking
+# ReSukiSU
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
