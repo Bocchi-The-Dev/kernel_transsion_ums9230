@@ -21,7 +21,7 @@ jobs:
 
       - name: Build Image
         run: |
-          make ARCH=arm64 LLVM_IAS=1 O="out" bg6-stock_defconfig
+          make ARCH=arm64 LLVM_IAS=1 O="out" bg6_defconfig
           make ARCH=arm64 LLVM_IAS=1 O="out" -j$(nproc) Image
 
       - name: Upload build output
