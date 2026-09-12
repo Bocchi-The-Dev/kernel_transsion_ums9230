@@ -28,6 +28,7 @@
 #include <linux/ioctl.h>
 #include <linux/security.h>
 #include <linux/hugetlb.h>
+#include <linux/pgsize_migration.h>
 
 int sysctl_unprivileged_userfaultfd __read_mostly;
 
@@ -1499,8 +1500,7 @@ static int userfaultfd_register(struct userfaultfd_ctx *ctx,
 		 * the current one has not been updated yet.
 		 */
 		vm_write_begin(vma);
-		WRITE_ONCE(vma->vm_flags, new_flags);
-		vma->vm_userfaultfd_ctx.ctx = ctx;
+		WRITE_ONCE(vma->vm_flags, vma_pad_fixup_flags(vma, new_flags));
 		vm_write_end(vma);
 
 		if (is_vm_hugetlb_page(vma) && uffd_disable_huge_pmd_share(vma))
@@ -1674,8 +1674,7 @@ static int userfaultfd_unregister(struct userfaultfd_ctx *ctx,
 		 * the current one has not been updated yet.
 		 */
 		vm_write_begin(vma);
-		WRITE_ONCE(vma->vm_flags, new_flags);
-		vma->vm_userfaultfd_ctx = NULL_VM_UFFD_CTX;
+		WRITE_ONCE(vma->vm_flags, vma_pad_fixup_flags(vma, new_flags));
 		vm_write_end(vma);
 
 	skip:
