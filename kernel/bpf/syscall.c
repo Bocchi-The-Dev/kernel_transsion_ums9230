@@ -2236,8 +2236,11 @@ static int bpf_prog_load(union bpf_attr *attr, union bpf_attr __user *uattr)
 
 	/* run eBPF verifier */
 	err = bpf_check(&prog, attr, uattr);
-	if (err < 0)
+	if (err < 0) {
+		pr_err("bpf: BPF_PROG_LOAD type=%u name=%s attach=%u failed err=%d\n",
+		       type, attr->prog_name, attr->expected_attach_type, err);
 		goto free_used_maps;
+	}
 
 	prog = bpf_prog_select_runtime(prog, &err);
 	if (err < 0)

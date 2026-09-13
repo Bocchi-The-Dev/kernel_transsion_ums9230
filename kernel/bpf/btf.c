@@ -1666,6 +1666,8 @@ __btf_resolve_size(const struct btf *btf, const struct btf_type *type,
 		case BTF_KIND_STRUCT:
 		case BTF_KIND_UNION:
 		case BTF_KIND_ENUM:
+		case BTF_KIND_FLOAT:
+		case BTF_KIND_ENUM64:
 			size = type->size;
 			goto resolved;
 
@@ -1678,6 +1680,7 @@ __btf_resolve_size(const struct btf *btf, const struct btf_type *type,
 		case BTF_KIND_VOLATILE:
 		case BTF_KIND_CONST:
 		case BTF_KIND_RESTRICT:
+		case BTF_KIND_TYPE_TAG:
 			id = type->type;
 			type = btf_type_by_id(btf, type->type);
 			break;
@@ -2275,7 +2278,9 @@ static int btf_ref_type_check_meta(struct btf_verifier_env *env,
 		return -EINVAL;
 	}
 
-	if (btf_type_kflag(t)) {
+	/* TYPE_TAG may carry kind_flag (clang btf_type_tag). */
+	if (btf_type_kflag(t) &&
+	    BTF_INFO_KIND(t->info) != BTF_KIND_TYPE_TAG) {
 		btf_verifier_log_type(env, t, "Invalid btf_info kind_flag");
 		return -EINVAL;
 	}
@@ -2285,10 +2290,12 @@ static int btf_ref_type_check_meta(struct btf_verifier_env *env,
 		return -EINVAL;
 	}
 
-	/* typedef type must have a valid name, and other ref types,
-	 * volatile, const, restrict, should have a null name.
+	/* typedef and type_tag must have a valid name; volatile/const/restrict
+	 * should have a null name. A17 libbpf loads clang BTF with named
+	 * TYPE_TAG ("user", "rcu", ...); rejecting the name aborts netd.o.
 	 */
-	if (BTF_INFO_KIND(t->info) == BTF_KIND_TYPEDEF) {
+	if (BTF_INFO_KIND(t->info) == BTF_KIND_TYPEDEF ||
+	    BTF_INFO_KIND(t->info) == BTF_KIND_TYPE_TAG) {
 		if (!t->name_off ||
 		    !btf_name_valid_identifier(env->btf, t->name_off)) {
 			btf_verifier_log_type(env, t, "Invalid name");
@@ -3398,7 +3405,7 @@ static s32 btf_func_check_meta(struct btf_verifier_env *env,
 		return -EINVAL;
 	}
 
-	if (btf_type_vlen(t) > BTF_FUNC_GLOBAL) {
+	if (btf_type_vlen(t) > BTF_FUNC_EXTERN) {
 		btf_verifier_log_type(env, t, "Invalid func linkage");
 		return -EINVAL;
 	}
@@ -5729,8 +5736,10 @@ int btf_new_fd(const union bpf_attr *attr)
 			attr->btf_size, attr->btf_log_level,
 			u64_to_user_ptr(attr->btf_log_buf),
 			attr->btf_log_size);
-	if (IS_ERR(btf))
+	if (IS_ERR(btf)) {
+		pr_err("bpf: BPF_BTF_LOAD failed err=%ld\n", PTR_ERR(btf));
 		return PTR_ERR(btf);
+	}
 
 	ret = btf_alloc_id(btf);
 	if (ret) {
