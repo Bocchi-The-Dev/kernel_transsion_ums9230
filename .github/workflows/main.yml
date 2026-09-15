@@ -1,0 +1,75 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ upstream-302, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      # NB: keep this a literal -- the `runner` context is not available in
+      # jobs.<id>.env, and referencing it there fails workflow validation.
+      CLANG_DIR: /tmp/clang-r416183b
+      # Mirror of what the vendor's own build config uses:
+      #
+      #   build.config.common : LLVM=1
+      #                         CLANG_PREBUILT_BIN=.../clang-r416183b/bin
+      #   build.config.aarch64: ARCH=arm64
+      #                         LLVM_IAS=1
+      #                         CROSS_COMPILE=aarch64-linux-gnu-
+      #
+      # The CROSS_COMPILE prefix is load-bearing: it is what supplies clang's
+      # target triple.  With ARCH=arm64 alone clang still compiles for the
+      # host, and the arm64 inline asm dies with
+      # "unknown register name 'x0' in asm" in asm/atomic_lse.h.
+      MAKE_ARGS: LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # libc6-dev-arm64-cross supplies /usr/aarch64-linux-gnu/include, which
+          # usr/include/Makefile adds to the UAPI header self-test.  That test is
+          # cross-compiled with a bare AOSP clang and no sysroot, so without it
+          # every UAPI header that includes a libc header (linux/virtio_ring.h ->
+          # <stdint.h>, linux/dvb/video.h -> <time.h>) fails on a missing
+          # glibc multilib header ('bits/libc-header-start.h',
+          # 'bits/wordsize.h').  See the comment in usr/include/Makefile.
+          sudo apt-get install -y flex bison bc cpio libssl-dev xz-utils dwarves \
+            libc6-dev-arm64-cross
+
+      - name: Fetch the reference toolchain (clang-r416183b)
+        run: |
+          curl -sSL -o /tmp/clang.tar.gz \
+            https://codeload.github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b/tar.gz/refs/heads/lineage-20.0
+          mkdir -p "$CLANG_DIR"
+          tar xzf /tmp/clang.tar.gz -C "$CLANG_DIR" --strip-components=1
+          echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: |
+          clang --version
+          ld.lld --version
+          llvm-ar --version | head -1
+
+      - name: Show kernel release
+        run: |
+          make $MAKE_ARGS transsion9230_defconfig
+          echo "kernelrelease: $(make $MAKE_ARGS -s kernelrelease)"
+
+      - name: Build Image
+        run: |
+          make $MAKE_ARGS -j$(nproc) Image
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-Image-${{ github.sha }}
+          path: out/arch/arm64/boot/Image
+          if-no-files-found: warn
