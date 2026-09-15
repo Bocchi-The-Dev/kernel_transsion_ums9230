@@ -893,6 +893,8 @@ __SYSCALL(__NR_epoll_pwait2, compat_sys_epoll_pwait2)
 __SYSCALL(__NR_mount_setattr, sys_mount_setattr)
 #define __NR_process_mrelease 448
 __SYSCALL(__NR_process_mrelease, sys_process_mrelease)
+#define __NR_futex_waitv 449
+__SYSCALL(__NR_futex_waitv, sys_futex_waitv)
 
 /*
  * Please add new compat syscalls above this comment and update
