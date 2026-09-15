@@ -590,6 +590,16 @@ static void wait_rcu_exp_gp(struct work_struct *wp)
 	rcu_exp_sel_wait_wake(rewp->rew_s);
 }
 
+#ifdef CONFIG_RCU_EXP_KTHREAD
+static void wait_rcu_exp_gp_kw(struct kthread_work *wp)
+{
+	struct rcu_exp_work *rewp;
+
+	rewp = container_of(wp, struct rcu_exp_work, rew_kwork);
+	rcu_exp_sel_wait_wake(rewp->rew_s);
+}
+#endif
+
 #ifdef CONFIG_PREEMPT_RCU
 
 /*
@@ -825,8 +835,16 @@ void synchronize_rcu_expedited(void)
 	} else {
 		/* Marshall arguments & schedule the expedited grace period. */
 		rew.rew_s = s;
-		INIT_WORK_ONSTACK(&rew.rew_work, wait_rcu_exp_gp);
-		queue_work(rcu_gp_wq, &rew.rew_work);
+#ifdef CONFIG_RCU_EXP_KTHREAD
+		if (READ_ONCE(rcu_exp_gp_kworker)) {
+			kthread_init_work(&rew.rew_kwork, wait_rcu_exp_gp_kw);
+			kthread_queue_work(rcu_exp_gp_kworker, &rew.rew_kwork);
+		} else
+#endif
+		{
+			INIT_WORK_ONSTACK(&rew.rew_work, wait_rcu_exp_gp);
+			queue_work(rcu_gp_wq, &rew.rew_work);
+		}
 	}
 
 	/* Wait for expedited grace period to complete. */
@@ -838,7 +856,13 @@ void synchronize_rcu_expedited(void)
 	/* Let the next expedited grace period start. */
 	mutex_unlock(&rcu_state.exp_mutex);
 
-	if (likely(!boottime))
-		destroy_work_on_stack(&rew.rew_work);
+	if (likely(!boottime)) {
+#ifdef CONFIG_RCU_EXP_KTHREAD
+		if (READ_ONCE(rcu_exp_gp_kworker))
+			kthread_flush_work(&rew.rew_kwork);
+		else
+#endif
+			destroy_work_on_stack(&rew.rew_work);
+	}
 }
 EXPORT_SYMBOL_GPL(synchronize_rcu_expedited);

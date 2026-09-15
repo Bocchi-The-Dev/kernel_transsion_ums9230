@@ -17,14 +17,18 @@
 #include <linux/seqlock.h>
 #include <linux/swait.h>
 #include <linux/stop_machine.h>
+#include <linux/kthread.h>
 #include <linux/rcu_node_tree.h>
 
 #include "rcu_segcblist.h"
 
-/* Communicate arguments to a workqueue handler. */
+/* Communicate arguments to a workqueue / kthread-worker handler. */
 struct rcu_exp_work {
 	unsigned long rew_s;
 	struct work_struct rew_work;
+#ifdef CONFIG_RCU_EXP_KTHREAD
+	struct kthread_work rew_kwork;
+#endif
 };
 
 /* RCU's kthread states for tracing. */

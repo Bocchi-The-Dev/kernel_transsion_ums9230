@@ -3318,6 +3318,21 @@ static int __init rcu_spawn_gp_kthread(void)
 	rcu_spawn_nocb_kthreads();
 	rcu_spawn_boost_kthreads();
 	rcu_spawn_core_kthreads();
+#ifdef CONFIG_RCU_EXP_KTHREAD
+	{
+		struct kthread_worker *kw;
+
+		kw = kthread_create_worker(0, "rcu_exp_gp");
+		if (!WARN_ON(IS_ERR(kw))) {
+			struct sched_param exp_sp = {
+				.sched_priority = kthread_prio ? kthread_prio : 2
+			};
+
+			sched_setscheduler_nocheck(kw->task, SCHED_FIFO, &exp_sp);
+			WRITE_ONCE(rcu_exp_gp_kworker, kw);
+		}
+	}
+#endif
 	return 0;
 }
 early_initcall(rcu_spawn_gp_kthread);
@@ -3541,6 +3556,9 @@ static void __init rcu_dump_rcu_node_tree(void)
 
 struct workqueue_struct *rcu_gp_wq;
 struct workqueue_struct *rcu_par_gp_wq;
+#ifdef CONFIG_RCU_EXP_KTHREAD
+struct kthread_worker *rcu_exp_gp_kworker;
+#endif
 
 void __init rcu_init(void)
 {

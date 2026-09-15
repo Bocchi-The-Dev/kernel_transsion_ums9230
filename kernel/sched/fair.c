@@ -7036,13 +7036,16 @@ unlock:
 	if (best_energy_cpu < 0)
 		return -1;
 	/*
-	 * Pick the best CPU if prev_cpu cannot be used, or if it saves at
-	 * least 6% of the energy used by prev_cpu.
+	 * Pick the best CPU if prev_cpu cannot be used, or if it saves
+	 * any energy. Do not compare against 6% of whole-system energy
+	 * (AOSP 6.1 / v5.19 "Remove the energy margin in feec()"): that
+	 * bar is too high for small Android tasks and traps them on big
+	 * CPUs.
 	 */
 	if (prev_delta == ULONG_MAX || best_energy_cpu == prev_cpu)
 		return best_energy_cpu;
 
-	if ((prev_delta - best_delta) > ((prev_delta + base_energy) >> 4))
+	if (best_delta < prev_delta)
 		return best_energy_cpu;
 
 	return select_cpu_with_same_energy(prev_cpu, best_energy_cpu, isolated_candidate,
