@@ -2657,9 +2657,17 @@ __call_rcu(struct rcu_head *head, rcu_callback_t func, bool lazy)
  */
 void call_rcu(struct rcu_head *head, rcu_callback_t func)
 {
-	__call_rcu(head, func, 0);
+	__call_rcu(head, func, IS_ENABLED(CONFIG_RCU_LAZY));
 }
 EXPORT_SYMBOL_GPL(call_rcu);
+
+#ifdef CONFIG_RCU_LAZY
+void call_rcu_hurry(struct rcu_head *head, rcu_callback_t func)
+{
+	__call_rcu(head, func, 0);
+}
+EXPORT_SYMBOL_GPL(call_rcu_hurry);
+#endif
 
 /*
  * Queue an RCU callback for lazy invocation after a grace period.
@@ -2743,7 +2751,7 @@ void synchronize_rcu(void)
 	if (rcu_gp_is_expedited())
 		synchronize_rcu_expedited();
 	else
-		wait_rcu_gp(call_rcu);
+		wait_rcu_gp(call_rcu_hurry);
 }
 EXPORT_SYMBOL_GPL(synchronize_rcu);
 

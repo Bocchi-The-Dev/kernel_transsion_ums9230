@@ -2212,6 +2212,10 @@ void __init rcu_init_nohz(void)
 	if (tick_nohz_full_running && cpumask_weight(tick_nohz_full_mask))
 		need_rcu_nocb_mask = true;
 #endif /* #if defined(CONFIG_NO_HZ_FULL) */
+#ifdef CONFIG_RCU_NOCB_CPU_DEFAULT_ALL
+	if (!cpumask_available(rcu_nocb_mask))
+		need_rcu_nocb_mask = true;
+#endif
 
 	if (!cpumask_available(rcu_nocb_mask) && need_rcu_nocb_mask) {
 		if (!zalloc_cpumask_var(&rcu_nocb_mask, GFP_KERNEL)) {
@@ -2221,6 +2225,11 @@ void __init rcu_init_nohz(void)
 	}
 	if (!cpumask_available(rcu_nocb_mask))
 		return;
+
+#ifdef CONFIG_RCU_NOCB_CPU_DEFAULT_ALL
+	if (cpumask_empty(rcu_nocb_mask))
+		cpumask_setall(rcu_nocb_mask);
+#endif
 
 #if defined(CONFIG_NO_HZ_FULL)
 	if (tick_nohz_full_running)

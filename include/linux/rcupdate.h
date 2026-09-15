@@ -36,6 +36,11 @@
 
 /* Exported common interfaces */
 void call_rcu(struct rcu_head *head, rcu_callback_t func);
+#ifdef CONFIG_RCU_LAZY
+void call_rcu_hurry(struct rcu_head *head, rcu_callback_t func);
+#else
+#define call_rcu_hurry call_rcu
+#endif
 void rcu_barrier_tasks(void);
 void synchronize_rcu(void);
 

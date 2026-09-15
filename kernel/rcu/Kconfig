@@ -219,4 +219,19 @@ config RCU_NOCB_CPU
 	  Say Y here if you want to help to debug reduced OS jitter.
 	  Say N here if you are unsure.
 
+config RCU_NOCB_CPU_DEFAULT_ALL
+	bool "Offload RCU callbacks from all CPUs by default"
+	depends on RCU_NOCB_CPU
+	help
+	  Same effect as rcu_nocbs=all without adding a cmdline argument.
+	  Needed for RCU_LAZY. Bootloader rcu_nocbs= still wins if set.
+
+config RCU_LAZY
+	bool "RCU lazy callback batching (save idle power)"
+	depends on RCU_NOCB_CPU
+	help
+	  Make call_rcu() lazy so lightly loaded/idle systems can save
+	  5-10% RCU power (AOSP 6.6). synchronize_rcu() uses
+	  call_rcu_hurry() so it does not stall.
+
 endmenu # "RCU Subsystem"
