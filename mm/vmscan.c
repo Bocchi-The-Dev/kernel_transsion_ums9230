@@ -2827,6 +2827,12 @@ out:
 
 #ifdef CONFIG_LRU_GEN
 
+#ifdef CONFIG_LRU_GEN_ENABLED
+DEFINE_STATIC_KEY_ARRAY_TRUE(lru_gen_caps, NR_LRU_GEN_CAPS);
+#else
+DEFINE_STATIC_KEY_ARRAY_FALSE(lru_gen_caps, NR_LRU_GEN_CAPS);
+#endif
+
 /******************************************************************************
  *                          shorthand helpers
  ******************************************************************************/
@@ -2861,6 +2867,15 @@ static int page_lru_tier(struct page *page)
 	       ((flags & LRU_REFS_MASK) >> LRU_REFS_PGOFF) + 1 : 0;
 
 	return lru_tier_from_refs(refs);
+}
+
+static bool get_cap(int cap)
+{
+#ifdef CONFIG_LRU_GEN_ENABLED
+	return static_branch_likely(&lru_gen_caps[cap]);
+#else
+	return static_branch_unlikely(&lru_gen_caps[cap]);
+#endif
 }
 
 static struct lruvec *get_lruvec(struct mem_cgroup *memcg, int nid)
@@ -3645,6 +3660,7 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 
 	lrugen->max_seq = MIN_NR_GENS + 1;
+	lrugen->enabled = lru_gen_enabled();
 
 	for_each_gen_type_zone(gen, type, zone)
 		INIT_LIST_HEAD(&lrugen->lists[gen][type][zone]);
