@@ -2833,6 +2833,36 @@ DEFINE_STATIC_KEY_ARRAY_TRUE(lru_gen_caps, NR_LRU_GEN_CAPS);
 DEFINE_STATIC_KEY_ARRAY_FALSE(lru_gen_caps, NR_LRU_GEN_CAPS);
 #endif
 
+
+/* Unisoc 5.4 compatibility helpers for MGLRU core */
+static inline bool cgroup_reclaim(struct scan_control *sc)
+{
+	return !global_reclaim(sc);
+}
+
+static inline bool mem_cgroup_below_min(struct mem_cgroup *memcg)
+{
+	return mem_cgroup_protected(NULL, memcg) == MEMCG_PROT_MIN;
+}
+
+static inline bool mem_cgroup_below_low(struct mem_cgroup *memcg)
+{
+	return mem_cgroup_protected(NULL, memcg) == MEMCG_PROT_LOW;
+}
+
+static inline void mem_cgroup_calculate_protection(struct mem_cgroup *root,
+						   struct mem_cgroup *memcg)
+{
+	unsigned long min, low;
+
+	mem_cgroup_protection(root, memcg, &min, &low);
+}
+
+#ifndef WORKINGSET_ACTIVATE_BASE
+#define WORKINGSET_ACTIVATE_BASE WORKINGSET_ACTIVATE
+#endif
+
+
 /******************************************************************************
  *                          shorthand helpers
  ******************************************************************************/
@@ -3277,7 +3307,7 @@ static bool sort_page(struct lruvec *lruvec, struct page *page, int tier_idx)
 		success = lru_gen_del_page(lruvec, page, true);
 		VM_BUG_ON_PAGE(!success, page);
 		SetPageUnevictable(page);
-		add_page_to_lru_list(page, lruvec);
+		add_page_to_lru_list(page, lruvec, page_lru(page));
 		__count_vm_events(UNEVICTABLE_PGCULLED, delta);
 		return true;
 	}
@@ -3286,7 +3316,7 @@ static bool sort_page(struct lruvec *lruvec, struct page *page, int tier_idx)
 		success = lru_gen_del_page(lruvec, page, true);
 		VM_BUG_ON_PAGE(!success, page);
 		SetPageSwapBacked(page);
-		add_page_to_lru_list_tail(page, lruvec);
+		add_page_to_lru_list_tail(page, lruvec, page_lru(page));
 		return true;
 	}
 
@@ -3298,7 +3328,7 @@ static bool sort_page(struct lruvec *lruvec, struct page *page, int tier_idx)
 
 		WRITE_ONCE(lrugen->protected[hist][type][tier - 1],
 			   lrugen->protected[hist][type][tier - 1] + delta);
-		__mod_lruvec_state(lruvec, WORKINGSET_ACTIVATE_BASE + type, delta);
+		__mod_lruvec_state(lruvec, WORKINGSET_ACTIVATE, delta);
 		return true;
 	}
 
@@ -3531,7 +3561,7 @@ static int evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swapp
 	if (list_empty(&list))
 		return scanned;
 
-	reclaimed = shrink_page_list(&list, pgdat, sc, &stat, false);
+	reclaimed = shrink_page_list(&list, pgdat, sc, 0, &stat, false);
 
 	/*
 	 * To avoid livelock, don't add rejected pages back to the same lists
@@ -3599,11 +3629,9 @@ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, bool 
 	if (current_is_kswapd())
 		return 0;
 
-	/* try other memcgs before going to the aging path */
-	if (!cgroup_reclaim(sc) && !sc->force_deactivate) {
-		sc->skipped_deactivate = true;
+	/* try other memcgs before going to the aging path (5.4: no force_deactivate) */
+	if (!cgroup_reclaim(sc) && current_is_kswapd())
 		return 0;
-	}
 
 	inc_max_seq(lruvec, max_seq);
 
