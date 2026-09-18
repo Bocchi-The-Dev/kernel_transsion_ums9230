@@ -51,6 +51,9 @@
 #include <linux/printk.h>
 #include <linux/dax.h>
 #include <linux/psi.h>
+#include <linux/ctype.h>
+#include <linux/memory_hotplug.h>
+#include <linux/kobject.h>
 
 #ifdef CONFIG_RCC
 #include <linux/version.h>
@@ -3677,6 +3680,212 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 	blk_finish_plug(&plug);
 }
 
+/******************************************************************************
+ *                          state change
+ ******************************************************************************/
+
+static bool __maybe_unused state_is_valid(struct lruvec *lruvec)
+{
+	struct lru_gen_struct *lrugen = &lruvec->lrugen;
+
+	if (lrugen->enabled) {
+		enum lru_list lru;
+
+		for_each_evictable_lru(lru) {
+			if (!list_empty(&lruvec->lists[lru]))
+				return false;
+		}
+	} else {
+		int gen, type, zone;
+
+		for_each_gen_type_zone(gen, type, zone) {
+			if (!list_empty(&lrugen->lists[gen][type][zone]))
+				return false;
+
+			/* unlikely but not a bug when reset_batch_size() is pending */
+			VM_WARN_ON(lrugen->nr_pages[gen][type][zone]);
+		}
+	}
+
+	return true;
+}
+
+static bool fill_evictable(struct lruvec *lruvec)
+{
+	enum lru_list lru;
+	int remaining = MAX_LRU_BATCH;
+
+	for_each_evictable_lru(lru) {
+		int type = is_file_lru(lru);
+		bool active = is_active_lru(lru);
+		struct list_head *head = &lruvec->lists[lru];
+
+		while (!list_empty(head)) {
+			bool success;
+			struct page *page = lru_to_page(head);
+
+			VM_BUG_ON_PAGE(PageTail(page), page);
+			VM_BUG_ON_PAGE(PageUnevictable(page), page);
+			VM_BUG_ON_PAGE(PageActive(page) != active, page);
+			VM_BUG_ON_PAGE(page_is_file_lru(page) != type, page);
+			VM_BUG_ON_PAGE(page_lru_gen(page) < MAX_NR_GENS, page);
+
+			prefetchw_prev_lru_page(page, head, flags);
+
+			del_page_from_lru_list(page, lruvec, lru);
+			success = lru_gen_add_page(lruvec, page, false);
+			VM_BUG_ON(!success);
+
+			if (!--remaining)
+				return false;
+		}
+	}
+
+	return true;
+}
+
+static bool drain_evictable(struct lruvec *lruvec)
+{
+	int gen, type, zone;
+	int remaining = MAX_LRU_BATCH;
+
+	for_each_gen_type_zone(gen, type, zone) {
+		struct list_head *head = &lruvec->lrugen.lists[gen][type][zone];
+
+		while (!list_empty(head)) {
+			bool success;
+			struct page *page = lru_to_page(head);
+
+			VM_BUG_ON_PAGE(PageTail(page), page);
+			VM_BUG_ON_PAGE(PageUnevictable(page), page);
+			VM_BUG_ON_PAGE(PageActive(page), page);
+			VM_BUG_ON_PAGE(page_is_file_lru(page) != type, page);
+			VM_BUG_ON_PAGE(page_zonenum(page) != zone, page);
+
+			prefetchw_prev_lru_page(page, head, flags);
+
+			success = lru_gen_del_page(lruvec, page, false);
+			VM_BUG_ON(!success);
+			/* lru_gen_del_page() already set PG_active correctly above */
+			add_page_to_lru_list(page, lruvec, page_lru(page));
+
+			if (!--remaining)
+				return false;
+		}
+	}
+
+	return true;
+}
+
+static void lru_gen_change_state(bool enable)
+{
+	static DEFINE_MUTEX(state_mutex);
+
+	struct mem_cgroup *memcg;
+
+	cgroup_lock();
+	cpus_read_lock();
+	get_online_mems();
+	mutex_lock(&state_mutex);
+
+	if (enable == lru_gen_enabled())
+		goto unlock;
+
+	if (enable)
+		static_branch_enable_cpuslocked(&lru_gen_caps[LRU_GEN_CORE]);
+	else
+		static_branch_disable_cpuslocked(&lru_gen_caps[LRU_GEN_CORE]);
+
+	memcg = mem_cgroup_iter(NULL, NULL, NULL);
+	do {
+		int nid;
+
+		for_each_node(nid) {
+			struct pglist_data *pgdat = NODE_DATA(nid);
+			struct lruvec *lruvec = get_lruvec(memcg, nid);
+
+			if (!lruvec)
+				continue;
+
+			if (!pgdat) {
+				lruvec->lrugen.enabled = enable;
+				continue;
+			}
+
+			spin_lock_irq(&pgdat->lru_lock);
+
+			VM_BUG_ON(!seq_is_valid(lruvec));
+			VM_BUG_ON(!state_is_valid(lruvec));
+
+			lruvec->lrugen.enabled = enable;
+
+			while (!(enable ? fill_evictable(lruvec) : drain_evictable(lruvec))) {
+				spin_unlock_irq(&pgdat->lru_lock);
+				cond_resched();
+				spin_lock_irq(&pgdat->lru_lock);
+			}
+
+			spin_unlock_irq(&pgdat->lru_lock);
+		}
+
+		cond_resched();
+	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
+unlock:
+	mutex_unlock(&state_mutex);
+	put_online_mems();
+	cpus_read_unlock();
+	cgroup_unlock();
+}
+
+/******************************************************************************
+ *                          sysfs interface
+ ******************************************************************************/
+
+static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned int caps = 0;
+
+	if (get_cap(LRU_GEN_CORE))
+		caps |= BIT(LRU_GEN_CORE);
+
+	return snprintf(buf, PAGE_SIZE, "0x%04x\n", caps);
+}
+
+static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr,
+			     const char *buf, size_t len)
+{
+	unsigned int caps;
+
+	if (tolower(*buf) == 'n')
+		caps = 0;
+	else if (tolower(*buf) == 'y')
+		caps = BIT(LRU_GEN_CORE);
+	else if (kstrtouint(buf, 0, &caps))
+		return -EINVAL;
+
+	/*
+	 * Only the core bit does anything on this tree: page-table-walk and
+	 * non-leaf-PMD-young components (bits 1-2 upstream) are not yet
+	 * ported here, so we only ever flip LRU_GEN_CORE.
+	 */
+	lru_gen_change_state(caps & BIT(LRU_GEN_CORE));
+
+	return len;
+}
+
+static struct kobj_attribute lru_gen_enabled_attr = __ATTR(
+	enabled, 0644, show_enable, store_enable
+);
+
+static struct attribute *lru_gen_attrs[] = {
+	&lru_gen_enabled_attr.attr,
+	NULL
+};
+
+static struct attribute_group lru_gen_attr_group = {
+	.name = "lru_gen",
+	.attrs = lru_gen_attrs,
+};
 
 /******************************************************************************
  *                          initialization
@@ -3716,6 +3925,9 @@ static int __init init_lru_gen(void)
 {
 	BUILD_BUG_ON(MIN_NR_GENS + 1 >= MAX_NR_GENS);
 	BUILD_BUG_ON(BIT(LRU_GEN_WIDTH) <= MAX_NR_GENS);
+
+	if (sysfs_create_group(mm_kobj, &lru_gen_attr_group))
+		pr_err("lru_gen: failed to create sysfs group\n");
 
 	return 0;
 };
