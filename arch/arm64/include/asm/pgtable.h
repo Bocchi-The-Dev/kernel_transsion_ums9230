@@ -8,7 +8,6 @@
 #include <asm/bug.h>
 #include <asm/proc-fns.h>
 
-#include <asm/cpufeature.h>
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable-prot.h>
@@ -880,7 +879,19 @@ static inline void update_mmu_cache(struct vm_area_struct *vma,
  * asm/cpufeature.h) queries this without touching Dirty Bit Management,
  * which stays off on affected Cortex-A55 cores via the existing
  * has_hw_dbm()/erratum 1024718 workaround.
+ *
+ * asm/cpufeature.h is included here rather than at the top of this file:
+ * it transitively pulls in asm/sysreg.h, which has a .irp-based assembler
+ * macro block guarded by #ifdef __ASSEMBLY__. arch/arm64/kernel/
+ * vmlinux.lds.S includes this header too, and its preprocessing defines
+ * __ASSEMBLY__ (cpp output goes straight to the linker, never through
+ * `as`) - so including cpufeature.h at the top, outside this file's own
+ * #ifndef __ASSEMBLY__ guard, leaked that raw .irp text into the final
+ * linker script and broke ld.lld ("unknown directive: .irp"). Keeping
+ * the include here, inside the guard, means it's correctly skipped in
+ * that context.
  */
+#include <asm/cpufeature.h>
 #define arch_has_hw_pte_young cpu_has_hw_af
 
 #ifdef CONFIG_ARM64_PA_BITS_52
