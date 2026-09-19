@@ -8,6 +8,7 @@
 #include <asm/bug.h>
 #include <asm/proc-fns.h>
 
+#include <asm/cpufeature.h>
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable-prot.h>
@@ -872,6 +873,15 @@ static inline void update_mmu_cache(struct vm_area_struct *vma,
 }
 
 #define update_mmu_cache_pmd(vma, address, pmd) do { } while (0)
+
+/*
+ * We don't always have a hardware-managed Access flag on arm64: it depends
+ * on ID_AA64MMFR1_EL1.HADBS on the running CPU. cpu_has_hw_af() (in
+ * asm/cpufeature.h) queries this without touching Dirty Bit Management,
+ * which stays off on affected Cortex-A55 cores via the existing
+ * has_hw_dbm()/erratum 1024718 workaround.
+ */
+#define arch_has_hw_pte_young cpu_has_hw_af
 
 #ifdef CONFIG_ARM64_PA_BITS_52
 #define phys_to_ttbr(addr)	(((addr) | ((addr) >> 46)) & TTBR_BADDR_MASK_52)

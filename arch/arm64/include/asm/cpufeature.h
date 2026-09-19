@@ -654,6 +654,29 @@ static inline bool system_supports_generic_auth(void)
 		 cpus_have_const_cap(ARM64_HAS_GENERIC_AUTH_IMP_DEF));
 }
 
+/*
+ * Query whether this CPU has a hardware-managed Access flag (the "A" in
+ * AFDBM), independent of Dirty Bit Management (the "D"). This only checks
+ * ID_AA64MMFR1_EL1.HADBS >= 1 (AF supported, HD optional), unlike the
+ * ARM64_HW_DBM capability in cpufeature.c which requires >= 2 (both).
+ *
+ * This is deliberately narrower than that capability: on this Cortex-A55
+ * hardware, erratum 1024718 corrupts DBM/AP-bit updates when TCR_ELx.HA
+ * and TCR_ELx.HD are BOTH enabled without break-before-make - the Access
+ * Flag mechanism on its own is unaffected (per ARM's own errata notice).
+ * has_hw_dbm()/cpu_enable_hw_dbm() already correctly keep TCR_HD off on
+ * affected cores; TCR_HA is set unconditionally in __cpu_setup (proc.S)
+ * regardless of that erratum check, so querying it here doesn't enable
+ * anything new - it only lets MGLRU know a mechanism already active in
+ * hardware exists.
+ */
+static inline bool cpu_has_hw_af(void)
+{
+	u64 mmfr1 = read_sanitised_ftr_reg(SYS_ID_AA64MMFR1_EL1);
+
+	return cpuid_feature_extract_unsigned_field(mmfr1, ID_AA64MMFR1_HADBS_SHIFT);
+}
+
 static __always_inline bool system_uses_irq_prio_masking(void)
 {
 	return IS_ENABLED(CONFIG_ARM64_PSEUDO_NMI) &&
