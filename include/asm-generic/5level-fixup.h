@@ -56,4 +56,12 @@ static inline int p4d_present(p4d_t p4d)
 #undef  p4d_addr_end
 #define p4d_addr_end(addr, end)		(end)
 
+/*
+ * a folded p4d (p4d_t == pgd_t here) is never itself a leaf/huge mapping,
+ * and a folded pud has exactly one entry, index 0 -- backported for
+ * multi-gen LRU's page table walker, mainline added these later.
+ */
+#define p4d_leaf(p4d)				0
+#define pud_index(address)			0
+
 #endif
