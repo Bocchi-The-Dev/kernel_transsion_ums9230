@@ -41,7 +41,15 @@
  * The lower ZRAM_FLAG_SHIFT bits is for object size (excluding header),
  * the higher bits is for zram_pageflags.
  */
-#define ZRAM_FLAG_SHIFT 24
+/*
+ * Object size lives in the low ZRAM_FLAG_SHIFT bits; pageflags above.
+ * PAGE_SHIFT+1 leaves room for MULTI_COMP priority / incompressible bits
+ * (and IDLE_FAST) without overflowing 32-bit flags on 4K pages.
+ */
+#define ZRAM_FLAG_SHIFT (PAGE_SHIFT + 1)
+
+/* Only 2 bits are allowed for comp priority index */
+#define ZRAM_COMP_PRIORITY_MASK	0x3
 
 /* Flags for zram pages (table[page_no].flags) */
 enum zram_pageflags {
@@ -54,6 +62,11 @@ enum zram_pageflags {
 	ZRAM_IDLE,	/* not accessed page since last idle marking */
 
 	ZRAM_IDLE_FAST,	/* not accessed page since last idle_fast marking */
+	ZRAM_INCOMPRESSIBLE, /* none of the algorithms could compress it */
+
+	ZRAM_COMP_PRIORITY_BIT1, /* First bit of comp priority index */
+	ZRAM_COMP_PRIORITY_BIT2, /* Second bit of comp priority index */
+
 	__NR_ZRAM_PAGEFLAGS,
 };
 
@@ -107,10 +120,20 @@ struct zram_hash {
 	struct rb_root rb_root;
 };
 
+#ifdef CONFIG_ZRAM_MULTI_COMP
+#define ZRAM_PRIMARY_COMP	0U
+#define ZRAM_SECONDARY_COMP	1U
+#define ZRAM_MAX_COMPS	4U
+#else
+#define ZRAM_PRIMARY_COMP	0U
+#define ZRAM_SECONDARY_COMP	0U
+#define ZRAM_MAX_COMPS	1U
+#endif
+
 struct zram {
 	struct zram_table_entry *table;
 	struct zs_pool *mem_pool;
-	struct zcomp *comp;
+	struct zcomp *comps[ZRAM_MAX_COMPS];
 	struct gendisk *disk;
 	struct zram_hash *hash;
 	size_t hash_size;
@@ -127,7 +150,8 @@ struct zram {
 	 * we can store in a disk.
 	 */
 	u64 disksize;	/* bytes */
-	char compressor[CRYPTO_MAX_ALG_NAME];
+	const char *comp_algs[ZRAM_MAX_COMPS];
+	s8 num_active_comps;
 	/*
 	 * zram is claimed so open request will be failed
 	 */
