@@ -468,6 +468,15 @@ static inline bool pud_table(pud_t pud) { return true; }
 				 PUD_TYPE_TABLE)
 #endif
 
+/*
+ * mainline names these pmd_leaf()/pud_leaf() (added after this tree's base
+ * version); on arm64 they're exactly pmd_sect()/pud_sect() -- present and
+ * not a next-level table pointer, i.e. a block/huge-page leaf mapping.
+ * Backported for multi-gen LRU's page table walker.
+ */
+#define pmd_leaf(pmd)		pmd_sect(pmd)
+#define pud_leaf(pud)		pud_sect(pud)
+
 extern pgd_t init_pg_dir[PTRS_PER_PGD];
 extern pgd_t init_pg_end[];
 extern pgd_t swapper_pg_dir[PTRS_PER_PGD];

@@ -699,6 +699,17 @@ static inline bool vma_is_anonymous(struct vm_area_struct *vma)
 	return !vma->vm_ops;
 }
 
+/*
+ * backported for multi-gen LRU's page table walker (mainline added this
+ * later); true if the vma has any of the RWX access flags set.
+ */
+#define VM_ACCESS_FLAGS	(VM_READ | VM_WRITE | VM_EXEC)
+
+static inline bool vma_is_accessible(struct vm_area_struct *vma)
+{
+	return vma->vm_flags & VM_ACCESS_FLAGS;
+}
+
 static inline bool is_shared_maywrite(vm_flags_t vm_flags)
 {
 	return (vm_flags & (VM_SHARED | VM_MAYWRITE)) ==

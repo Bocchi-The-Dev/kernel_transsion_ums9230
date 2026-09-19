@@ -38,6 +38,12 @@ static inline p4d_t *p4d_offset(pgd_t *pgd, unsigned long address)
 	return (p4d_t *)pgd;
 }
 
+/*
+ * a folded p4d is never itself a leaf/huge mapping -- backported for
+ * multi-gen LRU's page table walker, mainline added this later.
+ */
+#define p4d_leaf(p4d)		0
+
 #define p4d_val(x)				(pgd_val((x).pgd))
 #define __p4d(x)				((p4d_t) { __pgd(x) })
 

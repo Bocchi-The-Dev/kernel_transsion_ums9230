@@ -7,6 +7,7 @@
 #include <linux/auxvec.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/nodemask.h>
 #include <linux/rbtree.h>
 #include <linux/rwsem.h>
 #include <linux/completion.h>
@@ -485,6 +486,35 @@ struct core_state {
 };
 
 struct kioctx_table;
+
+#ifdef CONFIG_LRU_GEN
+/*
+ * This tree keeps struct mm_struct size-frozen: mm_struct_shadow +
+ * sizeof_same() in mm/memory.c exist because prebuilt vendor modules
+ * (GPU/WCN/etc -- flashed separately from the AnyKernel-swappable Image,
+ * never rebuilt against this source) are compiled against its existing
+ * field layout. So instead of an inline lru_gen sub-struct like upstream,
+ * we hang a heap-allocated one off the ANDROID_KABI_RESERVE(1) slot below
+ * -- same overall mm_struct size and layout, no ABI break.
+ */
+struct lru_gen_mm {
+	/* the node of a global or per-memcg mm_struct list */
+	struct list_head list;
+	/* the mm_struct this belongs to (container_of can't walk a pointer) */
+	struct mm_struct *mm;
+#ifdef CONFIG_MEMCG
+	/* points to the memcg of the owner task above */
+	struct mem_cgroup *memcg;
+#endif
+	/*
+	 * Set when switching to this mm_struct, as a hint of whether it has
+	 * been used since the last time per-node page table walkers cleared
+	 * the corresponding bits.
+	 */
+	nodemask_t nodes;
+};
+#endif /* CONFIG_LRU_GEN */
+
 struct mm_struct {
 	struct {
 		struct vm_area_struct *mmap;		/* list of VMAs */
@@ -642,7 +672,11 @@ struct mm_struct {
 		atomic_long_t hugetlb_usage;
 #endif
 		struct work_struct async_put_work;
+#ifdef CONFIG_LRU_GEN
+		ANDROID_KABI_USE(1, struct lru_gen_mm *lru_gen);
+#else
 		ANDROID_KABI_RESERVE(1);
+#endif
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT_DEBUG
 		seqlock_t mm_seq;
 #else
@@ -843,6 +877,61 @@ static inline cpumask_t *mm_cpumask(struct mm_struct *mm)
 {
 	return (struct cpumask *)&mm->cpu_bitmap;
 }
+
+#ifdef CONFIG_LRU_GEN
+
+struct lru_gen_mm_list {
+	/* mm_struct list for page table walkers */
+	struct list_head fifo;
+	/* protects the list above */
+	spinlock_t lock;
+};
+
+/*
+ * lru_gen_init_mm()/lru_gen_free_mm() do the kzalloc()/kfree() of the
+ * lru_gen_mm this mm's ANDROID_KABI_USE(1) slot now points at (see the
+ * struct's comment above) -- kept out-of-line in mm/vmscan.c rather than
+ * static inline here so this header doesn't need <linux/slab.h>.
+ */
+int lru_gen_init_mm(struct mm_struct *mm);
+void lru_gen_free_mm(struct mm_struct *mm);
+void lru_gen_add_mm(struct mm_struct *mm);
+void lru_gen_del_mm(struct mm_struct *mm);
+#ifdef CONFIG_MEMCG
+void lru_gen_migrate_mm(struct mm_struct *mm);
+#endif
+void lru_gen_use_mm(struct mm_struct *mm);
+
+#else /* !CONFIG_LRU_GEN */
+
+static inline int lru_gen_init_mm(struct mm_struct *mm)
+{
+	return 0;
+}
+
+static inline void lru_gen_free_mm(struct mm_struct *mm)
+{
+}
+
+static inline void lru_gen_add_mm(struct mm_struct *mm)
+{
+}
+
+static inline void lru_gen_del_mm(struct mm_struct *mm)
+{
+}
+
+#ifdef CONFIG_MEMCG
+static inline void lru_gen_migrate_mm(struct mm_struct *mm)
+{
+}
+#endif
+
+static inline void lru_gen_use_mm(struct mm_struct *mm)
+{
+}
+
+#endif /* CONFIG_LRU_GEN */
 
 struct mmu_gather;
 extern void tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,

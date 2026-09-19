@@ -1206,4 +1206,19 @@ static inline bool arch_has_pfn_modify_check(void)
 #define mm_pmd_folded(mm)	__is_defined(__PAGETABLE_PMD_FOLDED)
 #endif
 
+/*
+ * Whether the PTE/PMD accessed bit is set by hardware on access, with no
+ * software fault-in needed. arm64 doesn't implement HW Access Flag
+ * management in this tree (that's a later addition upstream); default to
+ * false like every other arch that doesn't override this. Backported for
+ * multi-gen LRU's page table walker, which uses this to decide whether a
+ * full page-table scan is worth doing versus relying on rmap look-around.
+ */
+#ifndef arch_has_hw_pte_young
+static inline bool arch_has_hw_pte_young(void)
+{
+	return false;
+}
+#endif
+
 #endif /* _ASM_GENERIC_PGTABLE_H */
