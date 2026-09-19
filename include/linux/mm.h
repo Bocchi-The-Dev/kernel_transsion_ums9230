@@ -700,8 +700,11 @@ static inline bool vma_is_anonymous(struct vm_area_struct *vma)
 }
 
 /*
- * backported for multi-gen LRU's page table walker (mainline added this
- * later); true if the vma has any of the RWX access flags set.
+ * This tree already had this check, just as a mm/memory.c-local static
+ * inline (used by the NUMA-balancing protnone fault path) instead of here
+ * in mm.h. Promoted to a header-visible helper so multi-gen LRU's page
+ * table walker (mm/vmscan.c) can use it too; the mm/memory.c copy was
+ * removed to avoid a redefinition.
  */
 #define VM_ACCESS_FLAGS	(VM_READ | VM_WRITE | VM_EXEC)
 
