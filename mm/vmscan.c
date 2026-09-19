@@ -3786,7 +3786,8 @@ static void walk_pmd_range_locked(pud_t *pud, unsigned long next, struct vm_area
 			goto next;
 
 		if (!pmd_trans_huge(pmd[i])) {
-			if (IS_ENABLED(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG))
+			if (IS_ENABLED(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG) &&
+			    get_cap(LRU_GEN_NONLEAF_YOUNG))
 				pmdp_test_and_clear_young(vma, addr, pmd + i);
 			goto next;
 		}
@@ -3893,10 +3894,12 @@ restart:
 		priv->mm_stats[MM_PMD_TOTAL]++;
 
 #ifdef CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG
-		if (!pmd_young(val))
-			continue;
+		if (get_cap(LRU_GEN_NONLEAF_YOUNG)) {
+			if (!pmd_young(val))
+				continue;
 
-		walk_pmd_range_locked(pud, addr, vma, walk, &pos);
+			walk_pmd_range_locked(pud, addr, vma, walk, &pos);
+		}
 #endif
 		if (!priv->full_scan && !test_bloom_filter(priv->lruvec, priv->max_seq, pmd + i))
 			continue;
@@ -4138,7 +4141,7 @@ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long max_seq,
 	 * handful of PTEs. Spreading the work out over a period of time usually
 	 * is less efficient, but it avoids bursty page faults.
 	 */
-	if (!full_scan && !arch_has_hw_pte_young()) {
+	if (!full_scan && (!arch_has_hw_pte_young() || !get_cap(LRU_GEN_MM_WALK))) {
 		success = iterate_mm_list_nowalk(lruvec, max_seq);
 		goto done;
 	}
@@ -5084,27 +5087,45 @@ static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, ch
 	if (get_cap(LRU_GEN_CORE))
 		caps |= BIT(LRU_GEN_CORE);
 
+	if (arch_has_hw_pte_young() && get_cap(LRU_GEN_MM_WALK))
+		caps |= BIT(LRU_GEN_MM_WALK);
+
+	if (IS_ENABLED(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG) && get_cap(LRU_GEN_NONLEAF_YOUNG))
+		caps |= BIT(LRU_GEN_NONLEAF_YOUNG);
+
 	return snprintf(buf, PAGE_SIZE, "0x%04x\n", caps);
 }
 
 static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr,
 			     const char *buf, size_t len)
 {
+	int i;
 	unsigned int caps;
 
 	if (tolower(*buf) == 'n')
 		caps = 0;
 	else if (tolower(*buf) == 'y')
-		caps = BIT(LRU_GEN_CORE);
+		caps = -1;
 	else if (kstrtouint(buf, 0, &caps))
 		return -EINVAL;
 
 	/*
-	 * Only the core bit does anything on this tree: page-table-walk and
-	 * non-leaf-PMD-young components (bits 1-2 upstream) are not yet
-	 * ported here, so we only ever flip LRU_GEN_CORE.
+	 * Page-table walks have landed, so LRU_GEN_MM_WALK and
+	 * LRU_GEN_NONLEAF_YOUNG are real static-key gates now (not
+	 * compile-time stubs). `echo y` turns every supported cap on;
+	 * a hex mask selects individually. CORE still goes through
+	 * lru_gen_change_state() so lists migrate correctly.
 	 */
-	lru_gen_change_state(caps & BIT(LRU_GEN_CORE));
+	for (i = 0; i < NR_LRU_GEN_CAPS; i++) {
+		bool enable = caps & BIT(i);
+
+		if (i == LRU_GEN_CORE)
+			lru_gen_change_state(enable);
+		else if (enable)
+			static_branch_enable(&lru_gen_caps[i]);
+		else
+			static_branch_disable(&lru_gen_caps[i]);
+	}
 
 	return len;
 }
