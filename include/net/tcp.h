@@ -1091,6 +1091,7 @@ struct tcp_congestion_ops {
 	struct module 	*owner;
 };
 
+struct tcp_congestion_ops *tcp_ca_find(const char *name);
 int tcp_register_congestion_control(struct tcp_congestion_ops *type);
 void tcp_unregister_congestion_control(struct tcp_congestion_ops *type);
 

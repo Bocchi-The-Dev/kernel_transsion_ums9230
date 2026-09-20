@@ -10,6 +10,7 @@
 #include <linux/skmsg.h>
 #include <linux/list.h>
 #include <linux/jhash.h>
+#include <net/udp.h>
 
 struct bpf_stab {
 	struct bpf_map map;
@@ -229,10 +230,21 @@ static int sock_map_link(struct bpf_map *map, struct sk_psock_progs *progs,
 	if (msg_parser)
 		psock_set_prog(&psock->progs.msg_parser, msg_parser);
 	if (sk_psock_is_new) {
-		ret = tcp_bpf_init(sk);
+		if (sk->sk_type == SOCK_DGRAM) {
+			struct proto *prot = udp_bpf_get_proto(sk, psock);
+
+			if (IS_ERR(prot)) {
+				ret = PTR_ERR(prot);
+				goto out_drop;
+			}
+			sk_psock_update_proto(sk, psock, prot);
+			ret = 0;
+		} else {
+			ret = tcp_bpf_init(sk);
+		}
 		if (ret < 0)
 			goto out_drop;
-	} else {
+	} else if (sk->sk_type != SOCK_DGRAM) {
 		tcp_bpf_reinit(sk);
 	}
 
@@ -1109,4 +1121,55 @@ void sk_psock_unlink(struct sock *sk, struct sk_psock_link *link)
 	default:
 		break;
 	}
+}
+
+static void sock_map_remove_links(struct sock *sk, struct sk_psock *psock)
+{
+	struct sk_psock_link *link;
+
+	while ((link = sk_psock_link_pop(psock))) {
+		sk_psock_unlink(sk, link);
+		sk_psock_free_link(link);
+	}
+}
+
+void sock_map_unhash(struct sock *sk)
+{
+	void (*saved_unhash)(struct sock *sk);
+	struct sk_psock *psock;
+
+	rcu_read_lock();
+	psock = sk_psock(sk);
+	if (unlikely(!psock)) {
+		rcu_read_unlock();
+		if (sk->sk_prot->unhash)
+			sk->sk_prot->unhash(sk);
+		return;
+	}
+
+	saved_unhash = psock->saved_unhash;
+	sock_map_remove_links(sk, psock);
+	rcu_read_unlock();
+	saved_unhash(sk);
+}
+
+void sock_map_close(struct sock *sk, long timeout)
+{
+	void (*saved_close)(struct sock *sk, long timeout);
+	struct sk_psock *psock;
+
+	lock_sock(sk);
+	rcu_read_lock();
+	psock = sk_psock(sk);
+	if (unlikely(!psock)) {
+		rcu_read_unlock();
+		release_sock(sk);
+		return sk->sk_prot->close(sk, timeout);
+	}
+
+	saved_close = psock->saved_close;
+	sock_map_remove_links(sk, psock);
+	rcu_read_unlock();
+	release_sock(sk);
+	saved_close(sk, timeout);
 }
