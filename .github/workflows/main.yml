@@ -35,6 +35,15 @@ jobs:
           # the build dies with "drivers/kernelsu: No such file or directory".
           submodules: recursive
 
+      # ReSukiSU's kernel/Kbuild derives its version from git (rev-list --count
+      # and git describe --abbrev=0 --tags).  actions/checkout below depth 1
+      # leaves the submodule shallow and tag-less, so Kbuild falls back to the
+      # placeholder "v4.1.0" name and a bogus 30000+1+700 version code.
+      # Unshallow and pull tags so the driver reports its real v4.2.0-rc2 tag.
+      - name: Expand KernelSU submodule history and tags
+        run: |
+          git -C KernelSU fetch --unshallow --tags
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
