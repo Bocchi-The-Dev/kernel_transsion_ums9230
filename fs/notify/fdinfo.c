@@ -16,6 +16,9 @@
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
 #endif // #ifdef CONFIG_KSU_SUSFS
+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
+#include <linux/slab.h>
+#endif
 
 #include "inotify/inotify.h"
 #include "fdinfo.h"

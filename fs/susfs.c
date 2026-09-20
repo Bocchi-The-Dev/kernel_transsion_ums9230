@@ -21,6 +21,8 @@
 #include <linux/fsnotify_backend.h>
 #include <linux/jump_label.h>
 #include <linux/security.h>
+#include <linux/srcu.h>
+#include <linux/jiffies.h>
 #include <linux/susfs.h>
 #include "fuse/fuse_i.h"
 #include "mount.h"

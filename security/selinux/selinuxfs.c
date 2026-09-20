@@ -40,6 +40,7 @@
 #include "security.h"
 #include "objsec.h"
 #include "conditional.h"
+#include "ss/services.h"
 
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
@@ -271,9 +272,9 @@ static int my_sel_open_handle_status(struct inode *inode, struct file *filp)
 	int ret;
 
 	if (likely(current_uid().val >= 10000 && ksu_selinux_hide_enabled)) {
-		mutex_lock(&selinux_state.status_lock);
+		mutex_lock(&selinux_state.ss->status_lock);
 		data = fake_status;
-		mutex_unlock(&selinux_state.status_lock);
+		mutex_unlock(&selinux_state.ss->status_lock);
 		if (data) {
 			filp->private_data = data;
 			return 0;
@@ -1006,6 +1007,7 @@ static ssize_t sel_write_member(struct file *file, char *buf, size_t size);
 static ssize_t my_write_access(struct file *file, char *buf, size_t size);
 static ssize_t my_write_context(struct file *file, char *buf, size_t size);
 #endif // #ifdef CONFIG_KSU_SUSFS
+static ssize_t sel_write_context(struct file *file, char *buf, size_t size);
 
 ssize_t (*const write_op[])(struct file *, char *, size_t) = {
 #ifdef CONFIG_KSU_SUSFS

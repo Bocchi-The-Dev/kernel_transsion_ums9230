@@ -4,6 +4,7 @@
 #include <linux/bits.h>
 #include <linux/string.h>
 #include <linux/jump_label.h>
+#include <linux/compiler.h>
 
 /********/
 /* ENUM */
@@ -160,4 +161,28 @@ static inline void susfs_clear_current_proc_no_su(void) {
 		inode && inode->i_mapping && \
 		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_mapping->flags)) && \
 		susfs_is_current_proc_umounted_app()
+
+/*
+ * 5.4 backport note: ReSukiSU's supercall/dispatch.c includes only
+ * <linux/susfs_def.h> but calls into fs/susfs.c. Provide forward
+ * declarations here so its -Werror=implicit-function-declaration
+ * build does not fail. Upstream keeps these in <linux/susfs.h>.
+ */
+#ifdef CONFIG_KSU_SUSFS
+void susfs_add_sus_path(void __user **user_info);
+void susfs_add_sus_path_loop(void __user **user_info);
+void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info);
+void susfs_add_sus_kstat(void __user **user_info);
+void susfs_update_sus_kstat(void __user **user_info);
+void susfs_set_uname(void __user **user_info);
+void susfs_enable_log(void __user **user_info);
+void susfs_set_cmdline_or_bootconfig(void __user **user_info);
+void susfs_add_open_redirect(void __user **user_info);
+void susfs_add_sus_map(void __user **user_info);
+void susfs_set_avc_log_spoofing(void __user **user_info);
+void susfs_get_enabled_features(void __user **user_info);
+void susfs_show_variant(void __user **user_info);
+void susfs_show_version(void __user **user_info);
+void susfs_start_sdcard_monitor_fn(void);
+#endif /* CONFIG_KSU_SUSFS */
 #endif // #ifndef KSU_SUSFS_DEF_H
