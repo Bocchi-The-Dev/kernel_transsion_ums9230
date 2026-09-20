@@ -788,6 +788,7 @@ static const struct file_operations sel_load_ops = {
 };
 
 #ifdef CONFIG_KSU_SUSFS
+static ssize_t sel_write_context(struct file *file, char *buf, size_t size);
 static ssize_t my_write_context(struct file *file, char *buf, size_t size)
 {
 	char *canon = NULL;
