@@ -5,6 +5,7 @@
 #include <linux/string.h>
 #include <linux/jump_label.h>
 #include <linux/compiler.h>
+#include <linux/cred.h>
 
 /********/
 /* ENUM */
