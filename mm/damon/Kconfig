@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+menu "Data Access Monitoring"
+
+config DAMON
+	bool "DAMON: Data Access Monitoring Framework"
+	help
+	  Framework that monitors access frequency of memory regions.
+	  Required by DAMON_RECLAIM (AOSP 6.1 / Linux 5.16).
+
+config DAMON_PADDR
+	bool "DAMON primitives for physical address space"
+	depends on DAMON && MMU
+	select IDLE_PAGE_TRACKING
+	help
+	  Physical-address monitoring primitives. Required by DAMON_RECLAIM.
+
+config DAMON_RECLAIM
+	bool "DAMON-based reclaim"
+	depends on DAMON_PADDR
+	help
+	  Finds cold pages with DAMON and reclaims them under light memory
+	  pressure. Enable at runtime:
+	    echo Y > /sys/module/damon_reclaim/parameters/enabled
+	  Default is off so boot is unchanged.
+
+endmenu
