@@ -1499,6 +1499,17 @@ static struct ctl_table vm_table[] = {
 		.extra2         = &one_hundred,
 #endif
 	},
+#ifdef CONFIG_KCOMPRESSD
+	{
+		.procname	= "kcompressd",
+		.data		= &vm_kcompressd,
+		.maxlen		= sizeof(vm_kcompressd),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= &two_hundred,
+	},
+#endif
 #ifdef CONFIG_DIRECT_SWAPPINESS
 	{
 		.procname       = "direct_swappiness",

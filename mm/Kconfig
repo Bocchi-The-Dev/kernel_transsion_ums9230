@@ -592,6 +592,15 @@ config MEM_SOFT_DIRTY
 
 	  See Documentation/admin-guide/mm/soft-dirty.rst for more details.
 
+config KCOMPRESSD
+	bool "Async kswapd compression offload (kcompressd)"
+	depends on SWAP
+	default n
+	help
+	  Offload anon swap compression/writeout from kswapd to a per-node
+	  kcompressd thread (Barry Song / MTK pattern). Runtime gated by
+	  /proc/sys/vm/kcompressd (0=off, default). Enable only if needed.
+
 config ZSWAP
 	bool "Compressed cache for swap pages (EXPERIMENTAL)"
 	depends on FRONTSWAP && CRYPTO=y
