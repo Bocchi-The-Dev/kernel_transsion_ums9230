@@ -25,3 +25,13 @@ config DAMON_RECLAIM
 	  Default is off so boot is unchanged.
 
 endmenu
+
+config DAMON_LRU_SORT
+	bool "DAMON-based LRU-lists sorting"
+	depends on DAMON_PADDR
+	help
+	  Prioritize hot pages and deprioritize cold pages on LRU lists using
+	  DAMON access patterns. Does not reclaim; complements DAMON_RECLAIM.
+	  Enable at runtime (default off):
+	    echo Y > /sys/module/damon_lru_sort/parameters/enabled
+

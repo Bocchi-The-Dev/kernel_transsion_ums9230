@@ -3,3 +3,4 @@
 obj-$(CONFIG_DAMON)		:= core.o
 obj-$(CONFIG_DAMON_PADDR)	+= prmtv-common.o paddr.o
 obj-$(CONFIG_DAMON_RECLAIM)	+= reclaim.o
+obj-$(CONFIG_DAMON_LRU_SORT)	+= lru_sort.o
