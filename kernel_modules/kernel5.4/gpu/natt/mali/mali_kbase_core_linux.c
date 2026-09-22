@@ -770,10 +770,12 @@ static int kbase_api_set_flags(struct kbase_file *kfile,
 	return err;
 }
 
+#if !MALI_USE_CSF
 static int kbase_api_dump_atoms_state(struct kbase_context *kctx)
 {
 	return kbase_dump_atoms(kctx);
 }
+#endif
 
 #if !MALI_USE_CSF
 static int kbase_api_job_submit(struct kbase_context *kctx,
@@ -1618,7 +1620,14 @@ static int kbase_api_set_boost(struct kbase_context *kctx,
 	if (kctx == NULL || boost == NULL)
 		return -EINVAL;
 
+#if MALI_USE_CSF
+	/* CSF driver has no jctx (Job Manager) context: feed the platform
+	 * boost level directly so the DVFS governor can honor boost hints.
+	 */
+	kbase_platform_set_boost(kctx->kbdev, kctx, boost->level);
+#else
 	kctx->jctx.level = boost->level;
+#endif
 
 	return 0;
 }
@@ -1773,11 +1782,13 @@ static long kbase_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	kctx->ioctl |= cmd;
 	/* Normal ioctls */
 	switch (cmd) {
+#if !MALI_USE_CSF
 	case KBASE_IOCTL_DUMP_ATOMS_STATE:
 		KBASE_HANDLE_IOCTL(KBASE_IOCTL_DUMP_ATOMS_STATE,
 				kbase_api_dump_atoms_state,
 				kctx);
 		break;
+#endif
 #if !MALI_USE_CSF
 	case KBASE_IOCTL_JOB_SUBMIT:
 		KBASE_HANDLE_IOCTL_IN(KBASE_IOCTL_JOB_SUBMIT,
