@@ -52,12 +52,30 @@
 #define UP_THRESHOLD        9/10
 #define FREQ_KHZ            1000
 
-#define T606_GPLL_FREQ      650000000
+/* susfs-testing: T606/612 GPLL raised 650 -> 850 MHz (OC, T619 bin-equivalent).
+ * 850 MHz @ 800 mV is the certified top-bin combo from the qogirl6 DTS
+ * dvfs-lists (idx 8) and the GPLL PLL range covers it (ftable max 900 MHz);
+ * the T619 path already programs GPLL to 850 MHz on identical silicon.
+ * RISK: T606/612 dies are lower-binned than T619 - an individual chip may
+ * not hold 850 MHz @ 800 mV (GPU hangs/artifacts). If unstable on-device,
+ * drop back to 750000000 (T616 bin) or 650000000 (stock).
+ */
+#define T606_GPLL_FREQ      850000000
 #define T616_GPLL_FREQ      750000000
 //#define DEFAULT_GPLL_FREQ   800000000
 
 #define GPU_768M_FREQ       768000000
 #define GPU_850M_FREQ       850000000
+
+/*
+ * susfs-testing: default DVFS floor for normal (non-boost) operation.
+ * Index into the GPU freq_list parsed from "sprd,dvfs-lists":
+ *   0 = 384 MHz   1 = 512 MHz   2 = 614.4 MHz   3 = 768 MHz   4 = 850 MHz
+ * Raising it from 0 to 2 keeps the GPU at >= 614 MHz whenever it is
+ * active, giving a noticeable smoothing/performance increase at the cost
+ * of higher power draw. Set back to 0 for stock behaviour.
+ */
+#define GPU_DVFS_BOOST_MIN_INDEX	2
 
 struct gpu_qos_config {
 	u8 arqos;
@@ -991,7 +1009,7 @@ void kbase_platform_modify_target_freq(struct device *dev, unsigned long *target
 	case 0:
 	default:
 		freq_max = &gpu_dvfs_ctx.freq_list[gpu_dvfs_ctx.freq_list_len-1];
-		freq_min = &gpu_dvfs_ctx.freq_list[0];
+		freq_min = &gpu_dvfs_ctx.freq_list[GPU_DVFS_BOOST_MIN_INDEX];
 		break;
 	}
 
