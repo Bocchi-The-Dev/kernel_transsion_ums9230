@@ -695,7 +695,7 @@ static int virtio_fs_setup_vqs(struct virtio_device *vdev,
 	unsigned int i;
 	int ret = 0;
 
-	virtio_cread_le(vdev, struct virtio_fs_config, num_request_queues,
+	virtio_cread(vdev, struct virtio_fs_config, num_request_queues,
 			&fs->num_request_queues);
 	if (fs->num_request_queues == 0)
 		return -EINVAL;
@@ -757,6 +757,7 @@ static void virtio_fs_cleanup_vqs(struct virtio_device *vdev,
  * been produced by .iomap_begin(), which maps a file offset to a window
  * offset.
  */
+#ifdef CONFIG_FUSE_DAX
 static long virtio_fs_direct_access(struct dax_device *dax_dev, pgoff_t pgoff,
 				    long nr_pages, void **kaddr, pfn_t *pfn)
 {
@@ -786,25 +787,11 @@ static size_t virtio_fs_copy_to_iter(struct dax_device *dax_dev,
 	return copy_to_iter(addr, bytes, i);
 }
 
-static int virtio_fs_zero_page_range(struct dax_device *dax_dev,
-				     pgoff_t pgoff, size_t nr_pages)
-{
-	long rc;
-	void *kaddr;
-
-	rc = dax_direct_access(dax_dev, pgoff, nr_pages, &kaddr, NULL);
-	if (rc < 0)
-		return rc;
-	memset(kaddr, 0, nr_pages << PAGE_SHIFT);
-	dax_flush(dax_dev, kaddr, nr_pages << PAGE_SHIFT);
-	return 0;
-}
-
 static const struct dax_operations virtio_fs_dax_ops = {
 	.direct_access = virtio_fs_direct_access,
 	.copy_from_iter = virtio_fs_copy_from_iter,
 	.copy_to_iter = virtio_fs_copy_to_iter,
-	.zero_page_range = virtio_fs_zero_page_range,
+	/* Seuj dax_operations lacks zero_page_range */
 };
 
 static void virtio_fs_cleanup_dax(void *data)
@@ -815,66 +802,18 @@ static void virtio_fs_cleanup_dax(void *data)
 	put_dax(dax_dev);
 }
 
+#endif /* CONFIG_FUSE_DAX */
+
 static int virtio_fs_setup_dax(struct virtio_device *vdev, struct virtio_fs *fs)
 {
-	struct virtio_shm_region cache_reg;
-	struct dev_pagemap *pgmap;
-	bool have_cache;
-
+	/*
+	 * Lineage DAX path needs virtio_get_shm_region / virtio_shm_region and
+	 * FUSE_DAX. Seuj lacks shm helpers; FUSE_DAX is off — no-op.
+	 */
 	if (!IS_ENABLED(CONFIG_FUSE_DAX))
 		return 0;
-
-	/* Get cache region */
-	have_cache = virtio_get_shm_region(vdev, &cache_reg,
-					   (u8)VIRTIO_FS_SHMCAP_ID_CACHE);
-	if (!have_cache) {
-		dev_notice(&vdev->dev, "%s: No cache capability\n", __func__);
-		return 0;
-	}
-
-	if (!devm_request_mem_region(&vdev->dev, cache_reg.addr, cache_reg.len,
-				     dev_name(&vdev->dev))) {
-		dev_warn(&vdev->dev, "could not reserve region addr=0x%llx len=0x%llx\n",
-			 cache_reg.addr, cache_reg.len);
-		return -EBUSY;
-	}
-
-	dev_notice(&vdev->dev, "Cache len: 0x%llx @ 0x%llx\n", cache_reg.len,
-		   cache_reg.addr);
-
-	pgmap = devm_kzalloc(&vdev->dev, sizeof(*pgmap), GFP_KERNEL);
-	if (!pgmap)
-		return -ENOMEM;
-
-	pgmap->type = MEMORY_DEVICE_FS_DAX;
-
-	/* Ideally we would directly use the PCI BAR resource but
-	 * devm_memremap_pages() wants its own copy in pgmap.  So
-	 * initialize a struct resource from scratch (only the start
-	 * and end fields will be used).
-	 */
-	pgmap->res = (struct resource){
-		.name = "virtio-fs dax window",
-		.start = (phys_addr_t) cache_reg.addr,
-		.end = (phys_addr_t) cache_reg.addr + cache_reg.len - 1,
-	};
-
-	fs->window_kaddr = devm_memremap_pages(&vdev->dev, pgmap);
-	if (IS_ERR(fs->window_kaddr))
-		return PTR_ERR(fs->window_kaddr);
-
-	fs->window_phys_addr = (phys_addr_t) cache_reg.addr;
-	fs->window_len = (phys_addr_t) cache_reg.len;
-
-	dev_dbg(&vdev->dev, "%s: window kaddr 0x%px phys_addr 0x%llx len 0x%llx\n",
-		__func__, fs->window_kaddr, cache_reg.addr, cache_reg.len);
-
-	fs->dax_dev = alloc_dax(fs, NULL, &virtio_fs_dax_ops, 0);
-	if (IS_ERR(fs->dax_dev))
-		return PTR_ERR(fs->dax_dev);
-
-	return devm_add_action_or_reset(&vdev->dev, virtio_fs_cleanup_dax,
-					fs->dax_dev);
+	dev_notice(&vdev->dev, "virtio-fs: FUSE_DAX not supported on this kernel\n");
+	return 0;
 }
 
 static int virtio_fs_probe(struct virtio_device *vdev)
