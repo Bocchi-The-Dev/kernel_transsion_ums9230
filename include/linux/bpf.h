@@ -2084,4 +2084,15 @@ int bpf_arch_text_poke(void *ip, enum bpf_text_poke_type t,
 struct btf_id_set;
 bool btf_id_set_contains(const struct btf_id_set *set, u32 id);
 
+
+#ifdef CONFIG_BPF_SYSCALL
+void bpf_task_storage_free(struct task_struct *task);
+extern const struct bpf_func_proto bpf_task_storage_get_proto;
+extern const struct bpf_func_proto bpf_task_storage_delete_proto;
+#else
+static inline void bpf_task_storage_free(struct task_struct *task)
+{
+}
+#endif
+
 #endif /* _LINUX_BPF_H */

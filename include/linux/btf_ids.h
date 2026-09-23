@@ -76,13 +76,18 @@ __BTF_ID_LIST(name, local)				\
 extern u32 name[];
 
 #define BTF_ID_LIST_GLOBAL(name)			\
-__BTF_ID_LIST(name, globl)
+__BTF_ID_LIST(name, globl)				\
+extern u32 name[];
 
 /* The BTF_ID_LIST_SINGLE macro defines a BTF_ID_LIST with
  * a single entry.
  */
 #define BTF_ID_LIST_SINGLE(name, prefix, typename)	\
 	BTF_ID_LIST(name) \
+	BTF_ID(prefix, typename)
+
+#define BTF_ID_LIST_GLOBAL_SINGLE(name, prefix, typename) \
+	BTF_ID_LIST_GLOBAL(name) \
 	BTF_ID(prefix, typename)
 
 /*
@@ -152,6 +157,7 @@ extern struct btf_id_set name;
 #define BTF_ID_UNUSED
 #define BTF_ID_LIST_GLOBAL(name) u32 name[1];
 #define BTF_ID_LIST_SINGLE(name, prefix, typename) static u32 name[1];
+#define BTF_ID_LIST_GLOBAL_SINGLE(name, prefix, typename) u32 name[1];
 #define BTF_SET_START(name) static struct btf_id_set name = { 0 };
 #define BTF_SET_START_GLOBAL(name) static struct btf_id_set name = { 0 };
 #define BTF_SET_END(name)
