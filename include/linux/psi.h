@@ -17,6 +17,11 @@ extern struct psi_group psi_system;
 void psi_init(void);
 
 void psi_task_change(struct task_struct *task, int clear, int set);
+#ifdef CONFIG_IRQ_TIME_ACCOUNTING
+void psi_account_irqtime(struct task_struct *task, u32 delta);
+#else
+static inline void psi_account_irqtime(struct task_struct *task, u32 delta) {}
+#endif
 
 void psi_memstall_tick(struct task_struct *task, int cpu);
 void psi_memstall_enter(unsigned long *flags);
@@ -40,6 +45,7 @@ __poll_t psi_trigger_poll(void **trigger_ptr, struct file *file,
 #else /* CONFIG_PSI */
 
 static inline void psi_init(void) {}
+static inline void psi_account_irqtime(struct task_struct *task, u32 delta) {}
 
 static inline void psi_memstall_enter(unsigned long *flags) {}
 static inline void psi_memstall_leave(unsigned long *flags) {}
