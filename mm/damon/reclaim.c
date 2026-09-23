@@ -31,6 +31,18 @@ static bool enabled __read_mostly;
 module_param(enabled, bool, 0600);
 
 /*
+ * Make DAMON_RECLAIM re-read input parameters (except enabled).
+ *
+ * Updated module parameters are not applied to a running instance by
+ * default. Writing Y to this parameter re-applies them (stop+start if
+ * currently enabled). Cleared back to N when done. If applying fails,
+ * DAMON_RECLAIM is disabled. Do not stack with damon_reclaim=Y under
+ * gaming; leave enabled=N unless userspace deliberately commits.
+ */
+static bool commit_inputs __read_mostly;
+module_param(commit_inputs, bool, 0600);
+
+/*
  * Time threshold for cold memory regions identification in microseconds.
  *
  * If a memory region is not accessed for this or longer time, DAMON_RECLAIM
@@ -343,6 +355,37 @@ free_region_out:
 	return err;
 }
 
+/*
+ * Re-apply module parameters to a (possibly running) instance by
+ * stop+start. Safe from timer/sysfs context; not from kdamond.
+ */
+static int damon_reclaim_apply_parameters(void)
+{
+	int err;
+
+	if (!enabled)
+		return 0;
+
+	err = damon_reclaim_turn(false);
+	if (err)
+		return err;
+	return damon_reclaim_turn(true);
+}
+
+static int damon_reclaim_handle_commit_inputs(void)
+{
+	int err;
+
+	if (!commit_inputs)
+		return 0;
+
+	err = damon_reclaim_apply_parameters();
+	commit_inputs = false;
+	if (err)
+		enabled = false;
+	return err;
+}
+
 #define ENABLE_CHECK_INTERVAL_MS	1000
 static struct delayed_work damon_reclaim_timer;
 static void damon_reclaim_timer_fn(struct work_struct *work)
@@ -356,6 +399,9 @@ static void damon_reclaim_timer_fn(struct work_struct *work)
 			last_enabled = now_enabled;
 		else
 			enabled = last_enabled;
+	} else if (commit_inputs) {
+		damon_reclaim_handle_commit_inputs();
+		last_enabled = enabled;
 	}
 
 	schedule_delayed_work(&damon_reclaim_timer,

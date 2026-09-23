@@ -31,6 +31,14 @@ static bool enabled __read_mostly;
 module_param(enabled, bool, 0600);
 
 /*
+ * Make DAMON_LRU_SORT re-read input parameters (except enabled).
+ * Write Y to apply live (stop+start if enabled). Cleared to N when done.
+ * Schemes stay runtime-OFF by default (enabled=N).
+ */
+static bool commit_inputs __read_mostly;
+module_param(commit_inputs, bool, 0600);
+
+/*
  * Access frequency threshold for hot memory regions identification in permil.
  * 500 means 50% of max accesses by default.
  */
@@ -268,6 +276,33 @@ static int damon_lru_sort_turn(bool on)
 	return err;
 }
 
+static int damon_lru_sort_apply_parameters(void)
+{
+	int err;
+
+	if (!enabled)
+		return 0;
+
+	err = damon_lru_sort_turn(false);
+	if (err)
+		return err;
+	return damon_lru_sort_turn(true);
+}
+
+static int damon_lru_sort_handle_commit_inputs(void)
+{
+	int err;
+
+	if (!commit_inputs)
+		return 0;
+
+	err = damon_lru_sort_apply_parameters();
+	commit_inputs = false;
+	if (err)
+		enabled = false;
+	return err;
+}
+
 #define ENABLE_CHECK_INTERVAL_MS	1000
 static struct delayed_work damon_lru_sort_timer;
 static void damon_lru_sort_timer_fn(struct work_struct *work)
@@ -281,6 +316,9 @@ static void damon_lru_sort_timer_fn(struct work_struct *work)
 			last_enabled = now_enabled;
 		else
 			enabled = last_enabled;
+	} else if (commit_inputs) {
+		damon_lru_sort_handle_commit_inputs();
+		last_enabled = enabled;
 	}
 
 	schedule_delayed_work(&damon_lru_sort_timer,
