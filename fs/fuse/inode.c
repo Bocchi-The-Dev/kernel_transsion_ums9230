@@ -674,12 +674,10 @@ static int fuse_parse_param(struct fs_context *fsc, struct fs_parameter *param)
 	if (fsc->purpose == FS_CONTEXT_FOR_RECONFIGURE) {
 		/*
 		 * Ignore options coming from mount(MS_REMOUNT) for backward
-		 * compatibility.
+		 * compatibility. Seuj fs_context lacks Lineage's oldapi bit;
+		 * keep Seuj behavior (always ignore on reconfigure).
 		 */
-		if (fsc->oldapi)
-			return 0;
-
-		return invalf(fsc, "No changes allowed in reconfigure");
+		return 0;
 	}
 
 	opt = fs_parse(fsc, &fuse_fs_parameters, param, &result);
