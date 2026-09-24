@@ -80,6 +80,71 @@ jobs:
         run: |
           make $MAKE_ARGS -j$(nproc) Image
 
+      # Mali GPU driver (mali_kbase.ko) is NOT part of the in-tree kernel build:
+      # it lives in kernel_modules/.../gpu/natt/mali and is built out-of-tree via
+      # its own Makefile against the just-built O=out tree. It carries the GPU
+      # OC/DVFS changes (T606_GPLL_FREQ in platform/qogirl6).
+      #
+      # Config notes:
+      #  - The driver is built as the Job Manager (JM) interface, NOT CSF: the
+      #    stock mali_kbase.ko pulled from the device's /vendor_dlkm defines the
+      #    JM scheduler/dispatcher (kbase_jd_submit, kbase_js_*: 11 T kbase_jd_*,
+      #    14 T kbase_js_*), kbase_dump_atoms and kbase_trace_gpu_work_period,
+      #    with no kbase_csf_* symbols - the T606 GPU is Bifrost-class (JM) and
+      #    the vendor userspace (libmali) speaks the JM kbase UAPI. Building
+      #    MALI_USE_CSF=1 is unusable anyway: JM-only objects (mali_kbase_jd.c,
+      #    mali_kbase_js.c) are excluded by Kbuild:273-288, yet always-built code
+      #    (core_linux dump/boost ioctls, trace_gpu_mem.c kbase_trace_gpu_work_period)
+      #    touches struct kbase_jd_atom / kctx->jctx, which only exist in JM builds.
+      #  - CONFIG_MALI_DEVFREQ=y: required to compile - several always-built files
+      #    (mali_kbase_gpu_utilisation_debugfs.c, gpu_stats_debugfs.c, backend
+      #    pm_backend/pm_statistics/pm_ca, core_linux suspend) reference struct
+      #    kbase_device members that only exist under CONFIG_MALI_DEVFREQ (e.g.
+      #    last_frequtil_metrics). Matches the vendor default (Kbuild:86-90
+      #    auto-sets it when PM_DEVFREQ + simple_ondemand are =y; the stock ko
+      #    imports devfreq_* and create/destroy_gpu_cooling_device). At runtime
+      #    devfreq only registers if the DT has operating-points-v2; SPRD instead
+      #    scales via the platform DVFS, so this is compile parity with stock.
+      #    CONFIG_MALI_MIDGARD_DVFS stays OFF on purpose: the stock ko does NOT
+      #    import kbase_platform_dvfs_event, and qogirl6 has no implementation of
+      #    it (its governor hooks via kbase_platform_modify_target_freq instead).
+      #    With MIDGARD_DVFS=y the call in mali_kbase_pm_metrics.c
+      #    (kbase_pm_get_dvfs_action) has no provider and modpost fails.
+      #  - mali_kbase.ko imports from two sibling modules, matching the stock
+      #    ko's "depends: sprd_gpu_cooling,trusty":
+      #      create/destroy_gpu_cooling_device <- drivers/thermal/sprd_gpu_cooling.ko
+      #      trusty_fast_call32                  <- drivers/trusty/trusty.ko
+      #    They are built right before the mali module so modpost can resolve
+      #    the imports (out/Module.symvers records their exports; the mali
+      #    build itself is a standalone external-module build).
+      #  - CONFIG_MALI_GATOR_SUPPORT=n -> no external gator profiler dependency
+      #  - MALI_JIT_PRESSURE_LIMIT_BASE=0 -> matches the vendor build (Kbuild
+      #    defaults it to 1).
+      #
+      # Kernel .config requirements (all already =y in bg6_defconfig): ANDROID,
+      # DMA_SHARED_BUFFER, PM_DEVFREQ, DEVFREQ_THERMAL, DEVFREQ_GOV_SIMPLE_ONDEMAND,
+      # FW_LOADER, SYNC_FILE. GPU_TRACEPOINTS is not defined in this tree, so the
+      # Kbuild guard sees it as unset rather than 'n' and passes.
+      - name: Build Mali GPU module (mali_kbase.ko)
+        run: |
+          make $MAKE_ARGS modules_prepare
+          # Build the modules mali_kbase.ko links against (stock ko shows
+          # "depends: sprd_gpu_cooling,trusty") so modpost can resolve their
+          # exports: create/destroy_gpu_cooling_device (sprd_gpu_cooling.ko)
+          # and trusty_fast_call32 (trusty.ko). Their exports land in
+          # out/Module.symvers, which the external mali build reads.
+          make $MAKE_ARGS -j$(nproc) drivers/thermal/sprd_gpu_cooling.ko drivers/trusty/trusty.ko
+          make -C kernel_modules/kernel5.4/gpu/natt/mali \
+            KDIR=$PWD/out \
+            LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            CONFIG_MALI_MIDGARD=m \
+            CONFIG_MALI_PLATFORM_NAME=qogirl6 \
+            CONFIG_MALI_CSF_SUPPORT=n \
+            MALI_USE_CSF=0 \
+            CONFIG_MALI_DEVFREQ=y \
+            CONFIG_MALI_GATOR_SUPPORT=n \
+            MALI_JIT_PRESSURE_LIMIT_BASE=0
+
       - name: Pack boot.img (magiskboot)
         run: |
           curl -sSL -o /tmp/magisk.apk \
@@ -100,6 +165,13 @@ jobs:
         with:
           name: kernel-Image-${{ github.sha }}
           path: out/arch/arm64/boot/Image
+          if-no-files-found: warn
+
+      - name: Upload mali_kbase module
+        uses: actions/upload-artifact@v4
+        with:
+          name: mali_kbase-${{ github.sha }}
+          path: kernel_modules/kernel5.4/gpu/natt/mali/mali_kbase.ko
           if-no-files-found: warn
 
       - name: Upload boot.img
