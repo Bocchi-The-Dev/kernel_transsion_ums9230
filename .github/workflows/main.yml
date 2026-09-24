@@ -3,7 +3,7 @@ name: Build Kernel
 on:
   workflow_dispatch:
   push:
-    branches: [ upstream-302, master ]
+    branches: [ upstream-302, master, susfs, susfs-testing ]
 
 jobs:
   build:
