@@ -80,9 +80,31 @@ jobs:
         run: |
           make $MAKE_ARGS -j$(nproc) Image
 
+      - name: Pack boot.img (magiskboot)
+        run: |
+          curl -sSL -o /tmp/magisk.apk \
+            "$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+               | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' \
+               | head -1)"
+          unzip -o -j /tmp/magisk.apk 'lib/x86_64/libmagiskboot.so' -d /tmp
+          chmod +x /tmp/libmagiskboot.so
+          mkdir -p /tmp/bootwork && cd /tmp/bootwork
+          /tmp/libmagiskboot.so unpack "$GITHUB_WORKSPACE/boot-gsi.img"
+          cp "$GITHUB_WORKSPACE/out/arch/arm64/boot/Image" kernel
+          /tmp/libmagiskboot.so repack "$GITHUB_WORKSPACE/boot-gsi.img"
+          mv new-boot.img "$GITHUB_WORKSPACE/boot.img"
+          ls -la "$GITHUB_WORKSPACE/boot.img"
+
       - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
           name: kernel-Image-${{ github.sha }}
           path: out/arch/arm64/boot/Image
           if-no-files-found: warn
+
+      - name: Upload boot.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-${{ github.sha }}
+          path: boot.img
+          if-no-files-found: error
