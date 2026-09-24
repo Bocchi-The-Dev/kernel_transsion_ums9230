@@ -1916,10 +1916,6 @@ out_ret:
 	return retval;
 }
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
-				void *argv, void *envp, int *flags);
-#endif
 #ifdef CONFIG_KSU_SUSFS
 extern struct static_key_true ksu_su_compat_enabled;
 extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
@@ -1937,9 +1933,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
-#ifdef CONFIG_KSU_MANUAL_HOOK
-	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-#endif
 #ifdef CONFIG_KSU_SUSFS
 {
 	int retval;
