@@ -189,6 +189,40 @@ config CLEAN_MIN_KBYTES
 	  due to the inability to reclaim the protected amount of clean file pages
 	  when other types of pages cannot be reclaimed.
 
+config ANON_MIN_RATIO
+	int "Default value for vm.anon_min_ratio"
+	depends on SYSCTL
+	range 0 100
+	default 0
+	help
+	  Percent of MemTotal used as the hard anonymous-page floor when
+	  vm.workingset_protection=1 and this value is non-zero. A non-zero
+	  ratio replaces vm.anon_min_kbytes. 0 keeps the kbyte floor.
+	  le9uo's upstream default is 15; this tree stays at 0 so enabling
+	  the master switch uses the tuned kbyte floors.
+
+config CLEAN_LOW_RATIO
+	int "Default value for vm.clean_low_ratio"
+	depends on SYSCTL
+	range 0 100
+	default 0
+	help
+	  Percent of MemTotal used as the best-effort clean-file floor when
+	  vm.workingset_protection=1 and this value is non-zero. A non-zero
+	  ratio replaces vm.clean_low_kbytes. 0 keeps the kbyte floor.
+
+config CLEAN_MIN_RATIO
+	int "Default value for vm.clean_min_ratio"
+	depends on SYSCTL
+	range 0 100
+	default 0
+	help
+	  Percent of MemTotal used as the hard clean-file floor when
+	  vm.workingset_protection=1 and this value is non-zero. A non-zero
+	  ratio replaces vm.clean_min_kbytes. 0 keeps the kbyte floor.
+	  le9uo's upstream default is 15; this tree stays at 0 so enabling
+	  the master switch uses the tuned kbyte floors.
+
 config HAVE_MEMBLOCK_NODE_MAP
 	bool
 

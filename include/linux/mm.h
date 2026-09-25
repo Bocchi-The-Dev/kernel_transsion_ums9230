@@ -212,6 +212,10 @@ extern int sysctl_max_map_count;
 extern unsigned long sysctl_anon_min_kbytes;
 extern unsigned long sysctl_clean_low_kbytes;
 extern unsigned long sysctl_clean_min_kbytes;
+extern int sysctl_workingset_protection;
+extern int sysctl_anon_min_ratio;
+extern int sysctl_clean_low_ratio;
+extern int sysctl_clean_min_ratio;
 
 extern unsigned long sysctl_user_reserve_kbytes;
 extern unsigned long sysctl_admin_reserve_kbytes;

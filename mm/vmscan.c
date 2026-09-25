@@ -207,6 +207,34 @@ struct scan_control {
 unsigned long sysctl_anon_min_kbytes __read_mostly = CONFIG_ANON_MIN_KBYTES;
 unsigned long sysctl_clean_low_kbytes __read_mostly = CONFIG_CLEAN_LOW_KBYTES;
 unsigned long sysctl_clean_min_kbytes __read_mostly = CONFIG_CLEAN_MIN_KBYTES;
+int sysctl_workingset_protection __read_mostly;
+int sysctl_anon_min_ratio __read_mostly = CONFIG_ANON_MIN_RATIO;
+int sysctl_clean_low_ratio __read_mostly = CONFIG_CLEAN_LOW_RATIO;
+int sysctl_clean_min_ratio __read_mostly = CONFIG_CLEAN_MIN_RATIO;
+
+/*
+ * Ratio > 0 replaces the matching kbyte floor with that percent of
+ * MemTotal. Ratio 0 keeps the kbyte sysctl (5.4 le9ec donor).
+ */
+static unsigned long le9_limit_kbytes(unsigned long kbytes, int ratio)
+{
+	u64 pages;
+
+	if (ratio <= 0)
+		return kbytes;
+
+	pages = (u64)totalram_pages() * ratio / 100;
+	return (unsigned long)(pages << (PAGE_SHIFT - 10));
+}
+
+static int __init le9uo_init(void)
+{
+	pr_info("le9uo working-set protection off (vm.workingset_protection=0, anon/clean floors %lu/%lu/%lu kB)\n",
+		sysctl_anon_min_kbytes, sysctl_clean_low_kbytes,
+		sysctl_clean_min_kbytes);
+	return 0;
+}
+late_initcall(le9uo_init);
 
 /*
  * From 0 .. 200.  Higher means more swappy.
@@ -1234,6 +1262,16 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			goto activate_locked;
 
 		if (!sc->may_unmap && page_mapped(page))
+			goto keep_locked;
+
+		/*
+		 * Hard working-set protection (le9uo). Keep the protected
+		 * class. Anon is still reclaimable when clean file pages are
+		 * also under the hard floor, so near-OOM can make progress.
+		 */
+		if (sysctl_workingset_protection &&
+		    (page_is_file_cache(page) ? sc->clean_below_min :
+		     (sc->anon_below_min && !sc->clean_below_min)))
 			goto keep_locked;
 
 		/* page_update_gen() tried to promote this page? */
@@ -2459,14 +2497,29 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 
 static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control *sc)
 {
-	if (lru_gen_enabled())
+	unsigned long anon_lim, low_lim, min_lim;
+
+	/*
+	 * Master switch. Default off. The kbyte floors in defconfig stay
+	 * loaded but do nothing until vm.workingset_protection=1.
+	 * Classic LRU and MGLRU both consume the flags set here.
+	 */
+	if (!sysctl_workingset_protection) {
+		sc->anon_below_min = 0;
+		sc->clean_below_low = 0;
+		sc->clean_below_min = 0;
 		return;
+	}
+
+	anon_lim = le9_limit_kbytes(sysctl_anon_min_kbytes, sysctl_anon_min_ratio);
+	low_lim = le9_limit_kbytes(sysctl_clean_low_kbytes, sysctl_clean_low_ratio);
+	min_lim = le9_limit_kbytes(sysctl_clean_min_kbytes, sysctl_clean_min_ratio);
 
 	/*
 	 * Check the number of anonymous pages to protect them from
 	 * reclaiming if their amount is below the specified.
 	 */
-	if (sysctl_anon_min_kbytes) {
+	if (anon_lim) {
 		unsigned long reclaimable_anon;
 
 		reclaimable_anon =
@@ -2475,7 +2528,7 @@ static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control 
 			node_page_state(pgdat, NR_ISOLATED_ANON);
 		reclaimable_anon <<= (PAGE_SHIFT - 10);
 
-		sc->anon_below_min = reclaimable_anon < sysctl_anon_min_kbytes;
+		sc->anon_below_min = reclaimable_anon < anon_lim;
 	} else
 		sc->anon_below_min = 0;
 
@@ -2483,7 +2536,7 @@ static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control 
 	 * Check the number of clean file pages to protect them from
 	 * reclaiming if their amount is below the specified.
 	 */
-	if (sysctl_clean_low_kbytes || sysctl_clean_min_kbytes) {
+	if (low_lim || min_lim) {
 		unsigned long reclaimable_file, dirty, clean;
 
 		reclaimable_file =
@@ -2500,8 +2553,8 @@ static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control 
 		else
 			clean = 0;
 
-		sc->clean_below_low = clean < sysctl_clean_low_kbytes;
-		sc->clean_below_min = clean < sysctl_clean_min_kbytes;
+		sc->clean_below_low = low_lim && clean < low_lim;
+		sc->clean_below_min = min_lim && clean < min_lim;
 	} else {
 		sc->clean_below_low = 0;
 		sc->clean_below_min = 0;
@@ -4751,6 +4804,23 @@ static int isolate_pages(struct lruvec *lruvec, struct scan_control *sc, int swa
 	else
 		type = get_type_to_scan(lruvec, swappiness, &tier);
 
+	/*
+	 * le9uo type bias. Prefer the unprotected class. Do not force anon
+	 * when this reclaim context cannot swap (swappiness == 0).
+	 */
+	if (sysctl_workingset_protection &&
+	    ((sc->clean_below_min && swappiness) ||
+	     sc->anon_below_min ||
+	     (sc->clean_below_low && swappiness))) {
+		if (sc->clean_below_min && swappiness)
+			type = LRU_GEN_ANON;
+		else if (sc->anon_below_min)
+			type = LRU_GEN_FILE;
+		else
+			type = LRU_GEN_ANON;
+		tier = -1;
+	}
+
 	for (i = !swappiness; i < ANON_AND_FILE; i++) {
 		if (tier < 0)
 			tier = get_tier_idx(lruvec, type);
@@ -4926,6 +4996,8 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 	if (current_is_kswapd())
 		current->reclaim_state->mm_walk = &pgdat->mm_walk;
 
+	prepare_workingset_protection(pgdat, sc);
+
 	while (true) {
 		int delta;
 		int swappiness;
@@ -4937,6 +5009,14 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 			swappiness = 1;
 		else
 			swappiness = 0;
+
+		/*
+		 * Hard clean-file floor and nothing to swap: stop this
+		 * lruvec so reclaim fails instead of thrashing the cache.
+		 */
+		if (sysctl_workingset_protection && sc->clean_below_min &&
+		    !swappiness)
+			break;
 
 		nr_to_scan = get_nr_to_scan(lruvec, sc, swappiness);
 		if (!nr_to_scan)

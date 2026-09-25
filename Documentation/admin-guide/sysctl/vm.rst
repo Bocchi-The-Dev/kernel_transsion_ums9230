@@ -25,7 +25,13 @@ files can be found in mm/swap.c.
 Currently, these files are in /proc/sys/vm:
 
 - admin_reserve_kbytes
+- anon_min_kbytes
+- anon_min_ratio
 - block_dump
+- clean_low_kbytes
+- clean_low_ratio
+- clean_min_kbytes
+- clean_min_ratio
 - compact_memory
 - compaction_proactiveness
 ========================
@@ -79,6 +85,7 @@ compact_unevictable_allowed
 - user_reserve_kbytes
 - vfs_cache_pressure
 - watermark_boost_factor
+- workingset_protection
 - watermark_scale_factor
 - zone_reclaim_mode
 
@@ -112,11 +119,105 @@ On x86_64 this is about 128MB.
 Changing this takes effect whenever an application requests memory.
 
 
+anon_min_kbytes
+===============
+
+This knob provides *hard* protection of anonymous pages. The anonymous pages
+on the current node won't be reclaimed under any conditions when their amount
+is below vm.anon_min_kbytes.
+
+This knob may be used to prevent excessive swap thrashing when anonymous
+memory is low (for example, when memory is going to be overfilled by
+compressed data of zram module).
+
+Setting this value too high (close to MemTotal) can result in inability to
+swap and can lead to early OOM under memory pressure.
+
+The default value is defined by CONFIG_ANON_MIN_KBYTES.
+
+This knob does nothing unless vm.workingset_protection is 1. If
+vm.anon_min_ratio is non-zero, that percent of MemTotal replaces this
+floor.
+
+
+anon_min_ratio
+==============
+
+Percent of MemTotal (0-100) used as the hard anonymous-page floor when
+vm.workingset_protection=1. 0 means "use vm.anon_min_kbytes instead".
+
+The default value is defined by CONFIG_ANON_MIN_RATIO (0 on this tree).
+
+
 block_dump
 ==========
 
 block_dump enables block I/O debugging when set to a nonzero value. More
 information on block I/O debugging is in Documentation/admin-guide/laptops/laptop-mode.rst.
+
+
+clean_low_kbytes
+================
+
+This knob provides *best-effort* protection of clean file pages. The file pages
+on the current node won't be reclaimed under memory pressure when the amount of
+clean file pages is below vm.clean_low_kbytes *unless* we threaten to OOM.
+
+Protection of clean file pages using this knob may be used when swapping is
+still possible to
+  - prevent disk I/O thrashing under memory pressure;
+  - improve performance in disk cache-bound tasks under memory pressure.
+
+Setting it to a high value may result in a early eviction of anonymous pages
+into the swap space by attempting to hold the protected amount of clean file
+pages in memory.
+
+The default value is defined by CONFIG_CLEAN_LOW_KBYTES.
+
+This knob does nothing unless vm.workingset_protection is 1. If
+vm.clean_low_ratio is non-zero, that percent of MemTotal replaces this
+floor.
+
+
+clean_low_ratio
+===============
+
+Percent of MemTotal (0-100) used as the best-effort clean-file floor when
+vm.workingset_protection=1. 0 means "use vm.clean_low_kbytes instead".
+
+The default value is defined by CONFIG_CLEAN_LOW_RATIO (0 on this tree).
+
+
+clean_min_kbytes
+================
+
+This knob provides *hard* protection of clean file pages. The file pages on the
+current node won't be reclaimed under memory pressure when the amount of clean
+file pages is below vm.clean_min_kbytes.
+
+Hard protection of clean file pages using this knob may be used to
+  - prevent disk I/O thrashing under memory pressure even with no free swap space;
+  - improve performance in disk cache-bound tasks under memory pressure;
+  - avoid high latency and prevent livelock in near-OOM conditions.
+
+Setting it to a high value may result in a early out-of-memory condition due to
+the inability to reclaim the protected amount of clean file pages when other
+types of pages cannot be reclaimed.
+
+The default value is defined by CONFIG_CLEAN_MIN_KBYTES.
+
+This knob does nothing unless vm.workingset_protection is 1. If
+vm.clean_min_ratio is non-zero, that percent of MemTotal replaces this
+floor.
+
+
+clean_min_ratio
+===============
+
+Percent of MemTotal (0-100) used as the hard clean-file floor when
+vm.workingset_protection=1. 0 means "use vm.clean_min_kbytes instead".
+
+The default value is defined by CONFIG_CLEAN_MIN_RATIO (0 on this tree).
 
 
 compact_memory
@@ -869,6 +970,20 @@ Keep in mind that filesystem IO patterns under memory pressure tend to
 be more efficient than swap's random IO. An optimal value will require
 experimentation and will also be workload-dependent.
 
+When vm.workingset_protection is 1, this knob has no effect if the amount
+of clean file pages on the current node is below the clean-file floor
+(vm.clean_low_kbytes / vm.clean_low_ratio, or the hard min). In this case,
+only anonymous pages can be reclaimed.
+
+If vm.workingset_protection is 1 and the number of anonymous pages on the
+current node is below the anon floor (vm.anon_min_kbytes or
+vm.anon_min_ratio), then only file pages can be reclaimed with any
+vm.swappiness value.
+
+With Multi-Gen LRU enabled, the same floors bias which generation type is
+scanned. The master switch still defaults to off, so neither LRU mode
+protects anything until userspace sets vm.workingset_protection=1.
+
 The default value is 60.
 
 For in-memory swap, like zram or zswap, as well as hybrid setups that
@@ -879,6 +994,23 @@ be 133 (x + 2x = 200, 2x = 133.33).
 
 At 0, the kernel will not initiate swap until the amount of free and
 file-backed pages is less than the high watermark in a zone.
+
+
+workingset_protection
+=====================
+
+Master switch for le9 / le9uo working-set protection.
+
+- 0 (default): the anon and clean-file floors are ignored. Reclaim matches
+  the kernel without le9.
+- 1: honor vm.anon_min_kbytes, vm.clean_low_kbytes and vm.clean_min_kbytes.
+  A non-zero vm.*_ratio replaces the matching kbyte floor with that percent
+  of MemTotal.
+
+On this tree the kbyte floors are built in (192 MiB anon hard, 384 MiB
+clean-file soft, 192 MiB clean-file hard) but they stay dormant until this
+switch is turned on. MGLRU does not disable the switch; both reclaim paths
+read it.
 
 
 unprivileged_userfaultfd
