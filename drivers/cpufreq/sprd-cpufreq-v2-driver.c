@@ -754,7 +754,7 @@ static struct device_node *sprd_cluster_node_init(u32 cpu_idx)
 static char oc_probe_buf[8192];
 static int oc_probe_pos;
 
-static bool oc_probe_boot;
+static bool oc_probe;
 module_param(oc_probe, bool, 0644);
 MODULE_PARM_DESC(oc_probe,
 	"run the TEE DVFS bin/version table sweep once at probe time "
@@ -1016,7 +1016,7 @@ static int sprd_cpufreq_probe(struct platform_device *pdev)
 
 #ifdef CONFIG_SPRD_CPU_OC_PROBE
 	proc_create("sprd_cpufreq_oc_probe", 0644, NULL, &oc_probe_fops);
-	if (oc_probe_boot)
+	if (oc_probe)
 		sprd_cpufreq_oc_probe();
 #endif
 
