@@ -368,17 +368,6 @@ config ARM_SPRD_CPUFREQ_V2
 
 	  If in doubt, say N.
 
-config SPRD_CPU_OC_PROBE
-	bool "SPRD CPU freq-table OC probe (debug)"
-	depends on ARM_SPRD_CPUFREQ_V2
-	help
-	  Temporary experiment: at probe time, sweep dvfs bin/SoC-version
-	  combinations reported to the secure DVFS service and dump the
-	  resulting top frequency per combination to /proc/sprd_cpufreq_oc_probe.
-	  Never changes the actual CPU clock.
-
-	  If in doubt, say N.
-
 endchoice
 
 if ARM_SPRD_SW_CPUFREQ
