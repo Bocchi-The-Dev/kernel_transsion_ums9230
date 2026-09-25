@@ -4185,8 +4185,6 @@ done:
 	if (wq_has_sleeper(&lruvec->mm_state.wait))
 		wake_up_all(&lruvec->mm_state.wait);
 
-	wakeup_flusher_threads(WB_REASON_VMSCAN);
-
 	return true;
 }
 
@@ -4557,7 +4555,10 @@ static bool isolate_page(struct lruvec *lruvec, struct page *page, struct scan_c
 	if (!get_page_unless_zero(page))
 		return false;
 
-	ClearPageLRU(page);
+	if (!TestClearPageLRU(page)) {
+		put_page(page);
+		return false;
+	}
 
 	success = lru_gen_del_page(lruvec, page, true);
 	VM_BUG_ON_PAGE(!success, page);
