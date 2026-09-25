@@ -360,7 +360,11 @@ int watermark_boost_factor __read_mostly;
 #else
 int watermark_boost_factor __read_mostly = 15000;
 #endif
-int watermark_scale_factor = 10;
+/*
+ * 40 = 0.4% of the zone between min and low. Stock 10 wakes kswapd
+ * too late on a multi-gigabyte phone, so direct reclaim hits the UI.
+ */
+int watermark_scale_factor = 40;
 
 /*
  * Extra memory for the system to try freeing. Used to temporarily

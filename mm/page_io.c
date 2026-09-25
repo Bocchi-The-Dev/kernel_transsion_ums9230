@@ -17,6 +17,8 @@
 #include <linux/pagemap.h>
 #include <linux/swap.h>
 #include <linux/kthread.h>
+#include <linux/kfifo.h>
+#include <linux/spinlock.h>
 #include <linux/bio.h>
 #include <linux/swapops.h>
 #include <linux/buffer_head.h>
@@ -195,10 +197,11 @@ bad_bmap:
 
 #ifdef CONFIG_KCOMPRESSD
 /*
- * Runtime gate: 0 disables async offload (default). Non-zero enables.
- * Depth hint also caps FIFO occupancy in pages (clamped to FIFO size).
+ * 0 disables async offload. Non-zero is the FIFO depth in pages.
+ * 64 keeps kswapd off the lz4kd path for a short queue without
+ * letting compression lag reclaim.
  */
-int vm_kcompressd; /* 0 = disabled (default) */
+int vm_kcompressd = 64;
 EXPORT_SYMBOL_GPL(vm_kcompressd);
 
 static bool kcompressd_store(struct page *page)
@@ -223,14 +226,21 @@ static bool kcompressd_store(struct page *page)
 	if (depth > KCOMPRESS_FIFO_SIZE)
 		depth = KCOMPRESS_FIFO_SIZE;
 
-	/* If FIFO is full, swap out the head synchronously to make room. */
-	if (kfifo_len(&pgdat->kcompress_fifo) >= depth * sizeof(page)) {
-		if (!kfifo_out(&pgdat->kcompress_fifo, &head, sizeof(page)))
+	/*
+	 * kswapd and kcompressd both touch the FIFO. The full-queue path
+	 * used to pop the head from kswapd, which raced with the consumer.
+	 */
+	spin_lock(&pgdat->kcompress_lock);
+	if (kfifo_len((struct kfifo *)pgdat->kcompress_fifo) >= depth * sizeof(page)) {
+		if (!kfifo_out((struct kfifo *)pgdat->kcompress_fifo, &head, sizeof(page))) {
+			spin_unlock(&pgdat->kcompress_lock);
 			return false;
+		}
 	}
 
 	get_page(page);
-	ret = kfifo_in(&pgdat->kcompress_fifo, &page, sizeof(page));
+	ret = kfifo_in((struct kfifo *)pgdat->kcompress_fifo, &page, sizeof(page));
+	spin_unlock(&pgdat->kcompress_lock);
 	if (likely(ret == sizeof(page))) {
 		/*
 		 * Mark writeback + unlock so shrink_page_list treats this as
@@ -286,7 +296,14 @@ int kcompressd(void *p)
 				!kfifo_is_empty(&pgdat->kcompress_fifo) ||
 				kthread_should_stop());
 
-		while (kfifo_out(&pgdat->kcompress_fifo, &page, sizeof(page))) {
+		for (;;) {
+			spin_lock(&pgdat->kcompress_lock);
+			if (!kfifo_out((struct kfifo *)pgdat->kcompress_fifo, &page, sizeof(page))) {
+				spin_unlock(&pgdat->kcompress_lock);
+				break;
+			}
+			spin_unlock(&pgdat->kcompress_lock);
+
 			lock_page(page);
 			if (PageWriteback(page))
 				end_page_writeback(page);

@@ -71,6 +71,7 @@ static long ratelimit_pages = 32;
 /*
  * Start background writeback (via writeback threads) at this percentage
  */
+/* Start writeback before a burst of dirty pages stalls the UI. */
 int dirty_background_ratio = 10;
 
 /*

@@ -974,7 +974,8 @@ typedef struct pglist_data {
 #define KCOMPRESS_FIFO_SIZE 256
 	wait_queue_head_t kcompressd_wait;
 	struct task_struct *kcompressd;
-	struct kfifo kcompress_fifo;
+	spinlock_t kcompress_lock;
+	void *kcompress_fifo; /* struct kfifo *; allocated in kswapd_run */
 #endif
 
 #ifdef CONFIG_COMPACTION
