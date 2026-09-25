@@ -119,6 +119,8 @@ static inline u32 calc_burst_penalty(u64 burst_time) {
 }
 
 static inline u64 scale_slice(u64 delta, struct sched_entity *se) {
+	if (!sched_bore)
+		return delta;
 	return mul_u64_u32_shr(delta, sched_prio_to_wmult[se->burst_score], 22);
 }
 
@@ -132,6 +134,18 @@ static void update_burst_score(struct sched_entity *se) {
 	p = task_of(se);
 	prio = p->static_prio - MAX_RT_PRIO;
 	prev_prio = min(39, prio + se->burst_score);
+
+	if (!sched_bore) {
+		/* echo 0: clear burst state and restore base nice weight */
+		se->burst_time = 0;
+		se->curr_burst_penalty = 0;
+		se->prev_burst_penalty = 0;
+		se->burst_penalty = 0;
+		se->burst_score = 0;
+		if (prev_prio != prio)
+			reweight_task(p, prio);
+		return;
+	}
 
 	se->burst_score = se->burst_penalty >> 2;
 
@@ -959,8 +973,10 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	schedstat_add(cfs_rq->exec_clock, delta_exec);
 
 #ifdef CONFIG_SCHED_BORE
-	curr->burst_time += delta_exec;
-	update_burst_penalty(curr);
+	if (sched_bore) {
+		curr->burst_time += delta_exec;
+		update_burst_penalty(curr);
+	}
 	curr->vruntime += max(1ULL, calc_delta_fair(delta_exec, curr));
 #else // !CONFIG_SCHED_BORE
 	curr->vruntime += calc_delta_fair(delta_exec, curr);

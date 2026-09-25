@@ -3060,6 +3060,8 @@ int wake_up_state(struct task_struct *p, unsigned int state)
 }
 
 #ifdef CONFIG_SCHED_BORE
+extern uint sched_bore;
+
 static void __init sched_init_bore(void) {
 	init_task.se.burst_time = 0;
 	init_task.se.prev_burst_penalty = 0;
@@ -3077,6 +3079,8 @@ void inline sched_fork_bore(struct task_struct *p) {
 }
 
 static void sched_post_fork_bore(struct task_struct *p) {
+	if (!sched_bore)
+		return;
 	if (p->sched_class == &fair_sched_class && p->real_parent) {
 		p->se.prev_burst_penalty = p->real_parent->se.burst_penalty;
 		p->se.burst_penalty = p->se.prev_burst_penalty;
