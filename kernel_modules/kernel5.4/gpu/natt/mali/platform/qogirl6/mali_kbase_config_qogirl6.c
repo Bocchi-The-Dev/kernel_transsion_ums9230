@@ -953,6 +953,12 @@ void kbase_platform_limit_max_freq(struct device *dev)
 	//T616: GPLL max freq is 750M
 	// GPLL max freq is 850M
 	//printk(KERN_ERR "Jassmine kbase_platform_limit_max_freq auto_efuse, %s", auto_efuse);
+#if (T606_GPLL_FREQ < 850000000)
+	/* Stock GPLL ceiling (650/750 MHz) cannot clock the 768/850 bins: drop
+	 * those OPPs so devfreq/Franco never expose frequencies the PLL cannot
+	 * reach. The OC build (T606_GPLL_FREQ=850000000) keeps them from the DT
+	 * so available_frequencies shows up to 850 and the governor can drive
+	 * the full sprd,dvfs-lists range. */
 	if (!strcmp(auto_efuse, "T606") ||
 		!strcmp(auto_efuse, "T612") || !strcmp(auto_efuse, "T616"))
 	{
@@ -963,6 +969,7 @@ void kbase_platform_limit_max_freq(struct device *dev)
 		//add GPLL max freq
 		dev_pm_opp_add(dev, gpu_dvfs_ctx.freq_list[gpu_dvfs_ctx.freq_list_len-1].freq * FREQ_KHZ, gpu_dvfs_ctx.freq_list[gpu_dvfs_ctx.freq_list_len-1].volt);
 	}
+#endif
 }
 
 int kbase_platform_set_freq_volt(int freq, int volt)
