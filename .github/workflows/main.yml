@@ -80,33 +80,6 @@ jobs:
         run: |
           make $MAKE_ARGS -j$(nproc) Image
 
-      # The TEE DVFS probe (SPRD_CPU_OC_PROBE) ships inside
-      # sprd-cpufreq-v2.ko.  On this device the sprd cpufreq/public/sip
-      # drivers are loadable modules packed into the vendor_boot ramdisk
-      # (/lib/modules + modules.load), NOT built-in - the built-in (=y)
-      # variant wedges the boot before USB comes up.  So the probe image is
-      # the =m build + these three .ko swapped into vendor_boot.
-      - name: Build sprd cpufreq/sip modules
-        run: |
-          make $MAKE_ARGS -j$(nproc) modules_prepare
-          make $MAKE_ARGS -j$(nproc) \
-            drivers/cpufreq/sprd-cpufreq-v2.ko \
-            drivers/cpufreq/sprd-cpufreq-public.ko \
-            drivers/firmware/sprd_sip_svc.ko
-          ls -la out/drivers/cpufreq/sprd-cpufreq-v2.ko \
-                out/drivers/cpufreq/sprd-cpufreq-public.ko \
-                out/drivers/firmware/sprd_sip_svc.ko
-
-      - name: Upload sprd cpufreq/sip modules
-        uses: actions/upload-artifact@v4
-        with:
-          name: sprd-cpufreq-modules-${{ github.sha }}
-          path: |
-            out/drivers/cpufreq/sprd-cpufreq-v2.ko
-            out/drivers/cpufreq/sprd-cpufreq-public.ko
-            out/drivers/firmware/sprd_sip_svc.ko
-          if-no-files-found: error
-
       # Mali GPU driver (mali_kbase.ko) is NOT part of the in-tree kernel build:
       # it lives in kernel_modules/.../gpu/natt/mali and is built out-of-tree via
       # its own Makefile against the just-built O=out tree. It carries the GPU
