@@ -720,6 +720,135 @@ static struct device_node *sprd_cluster_node_init(u32 cpu_idx)
 	return of_parse_phandle(cpu_dev->of_node, "cpufreq-data-v1", 0);
 }
 
+#ifdef CONFIG_SPRD_CPU_OC_PROBE
+/*
+ * CPU OC experiment probe.
+ *
+ * The CPU DVFS tables are served by the secure world (TEE) through SIP SMC
+ * calls.  The kernel reports which silicon bin ("dvfs_bin" efuse) and SoC
+ * version ("/hwfeature/auto" efuse string) to use via bin_set()/version_set(),
+ * and the TEE returns the matching freq/vol table from table_update().
+ *
+ * On the T606 the stock max is 1612 MHz on both clusters.  This probe hunts
+ * for a combination of (bin, version) that makes the TEE hand out a higher
+ * table, purely read-only: it never calls freq_set(), so the running clocks
+ * are untouched.  Results are dumped to /proc/sprd_cpufreq_oc_probe.
+ */
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+
+static char oc_probe_buf[8192];
+static int oc_probe_pos;
+
+static void oc_probe_printf(const char *fmt, ...)
+{
+	va_list args;
+	int n;
+
+	if (oc_probe_pos >= sizeof(oc_probe_buf) - 256)
+		return;
+	va_start(args, fmt);
+	n = vsnprintf(oc_probe_buf + oc_probe_pos,
+		      sizeof(oc_probe_buf) - oc_probe_pos, fmt, args);
+	va_end(args);
+	if (n > 0)
+		oc_probe_pos += n;
+}
+
+static int oc_probe_show(struct seq_file *m, void *v)
+{
+	seq_write(m, oc_probe_buf, oc_probe_pos);
+	return 0;
+}
+
+static int oc_probe_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, oc_probe_show, NULL);
+}
+
+static const struct file_operations oc_probe_fops = {
+	.owner = THIS_MODULE,
+	.open = oc_probe_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static void sprd_cpufreq_oc_probe(void)
+{
+	static const char * const oc_vers[] = { "T606", "T612", "T616", "T619" };
+	struct cluster_info *cluster;
+	u64 orig_tok = 0, tok = 0, f, v;
+	u64 *cluster_version;
+	u32 orig_bin, n;
+	int ci, bi, vi;
+
+	oc_probe_pos = 0;
+	oc_probe_printf("# SPRD CPU OC probe\n");
+
+	for (ci = 0; ci < sprd_cluster_num(); ci++) {
+		cluster = pclusters + ci;
+		orig_bin = cluster->bin;
+		cluster_version = cluster->version;
+		if (cluster_version)
+			orig_tok = *cluster_version;
+
+		mutex_lock(&cluster->mutex);
+
+		oc_probe_printf("cluster%d (orig bin=%#x", ci, orig_bin);
+		if (cluster_version)
+			oc_probe_printf(", version=%llu)", orig_tok);
+		oc_probe_printf("\n");
+
+		/* sweep dvfs_bin: 0..63 */
+		for (bi = 0; bi < 64; bi++) {
+			n = 0; f = 0; v = 0;
+			if (cluster->bin_set(cluster->id, bi))
+				oc_probe_printf("  bin=%#x set-fail\n", bi);
+			else if (cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT, &n))
+				oc_probe_printf("  bin=%#x tbl-fail\n", bi);
+			else if (cluster->pair_get(cluster->id, n - 1, &f, &v))
+				oc_probe_printf("  bin=%#x pair(%u)-fail\n", bi, n);
+			else
+				oc_probe_printf("  bin=%#x entries=%u top=%lluHz %lluuV\n",
+						 bi, n, f, v);
+		}
+
+		/* restore the real bin */
+		cluster->bin_set(cluster->id, orig_bin);
+
+		/* sweep SoC version tokens (multi-version clusters) */
+		if (cluster_version) {
+			for (vi = 0; vi < ARRAY_SIZE(oc_vers); vi++) {
+				memset(&tok, 0, sizeof(tok));
+				memcpy(&tok, oc_vers[vi], strlen(oc_vers[vi]));
+				n = 0; f = 0; v = 0;
+				if (cluster->version_set(cluster->id, &tok))
+					oc_probe_printf("  ver=%s set-fail\n", oc_vers[vi]);
+				else if (cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT, &n))
+					oc_probe_printf("  ver=%s tbl-fail\n", oc_vers[vi]);
+				else if (cluster->pair_get(cluster->id, n - 1, &f, &v))
+					oc_probe_printf("  ver=%s pair(%u)-fail\n", oc_vers[vi], n);
+				else
+					oc_probe_printf("  ver=%s entries=%u top=%lluHz %lluuV\n",
+							 oc_vers[vi], n, f, v);
+			}
+			/* restore the real version */
+			cluster->version_set(cluster->id, &orig_tok);
+		}
+
+		/* restore the real table before cpufreq core init */
+		cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT,
+				      &cluster->table_entry_num);
+
+		mutex_unlock(&cluster->mutex);
+	}
+
+	proc_create("sprd_cpufreq_oc_probe", 0444, NULL, &oc_probe_fops);
+	oc_probe_printf("# end\n");
+}
+#endif /* CONFIG_SPRD_CPU_OC_PROBE */
+
 static int sprd_cluster_info_init(struct cluster_info *clusters)
 {
 	struct cluster_info *cluster;
@@ -806,6 +935,10 @@ static int sprd_cpufreq_probe(struct platform_device *pdev)
 		dev_err(dev, "%s: init dvfs debug error\n", __func__);
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_SPRD_CPU_OC_PROBE
+	sprd_cpufreq_oc_probe();
+#endif
 
 	ret = cpufreq_register_driver(&sprd_cpufreq_driver);
 	if (ret)
