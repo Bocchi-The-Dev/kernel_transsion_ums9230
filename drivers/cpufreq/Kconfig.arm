@@ -372,10 +372,15 @@ config SPRD_CPU_OC_PROBE
 	bool "SPRD CPU freq-table OC probe (debug)"
 	depends on ARM_SPRD_CPUFREQ_V2
 	help
-	  Temporary experiment: at probe time, sweep dvfs bin/SoC-version
-	  combinations reported to the secure DVFS service and dump the
-	  resulting top frequency per combination to /proc/sprd_cpufreq_oc_probe.
-	  Never changes the actual CPU clock.
+	  Temporary experiment: sweep dvfs bin/SoC-version combinations reported
+	  to the secure DVFS service and dump the resulting top frequency per
+	  combination to /proc/sprd_cpufreq_oc_probe.  Never changes the actual
+	  CPU clock.
+
+	  The sweep is OFF by default.  Trigger it at runtime with
+	    echo 1 > /proc/sprd_cpufreq_oc_probe
+	  or ask for a single boot-time run with the kernel cmdline
+	    sprd_cpufreq_v2.oc_probe=1
 
 	  If in doubt, say N.
 
