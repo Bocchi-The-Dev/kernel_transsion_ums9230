@@ -160,11 +160,8 @@ static const int cap_last_cap = CAP_LAST_CAP;
 extern uint sched_bore;
 extern uint sched_burst_smoothness_long;
 extern uint sched_burst_smoothness_short;
-extern uint sched_burst_fork_atavistic;
 extern uint sched_burst_penalty_offset;
 extern uint sched_burst_penalty_scale;
-extern uint sched_burst_cache_lifetime;
-static int __maybe_unused three          = 3;
 static int __maybe_unused sixty_four     = 64;
 static int __maybe_unused maxval_12_bits = 4095;
 #endif // CONFIG_SCHED_BORE
@@ -1333,15 +1330,6 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 	{
-		.procname	= "sched_burst_fork_atavistic",
-		.data		= &sched_burst_fork_atavistic,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler = proc_douintvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= &three,
-	},
-	{
 		.procname	= "sched_burst_penalty_offset",
 		.data		= &sched_burst_penalty_offset,
 		.maxlen		= sizeof(int),
@@ -1358,13 +1346,6 @@ static struct ctl_table kern_table[] = {
 		.proc_handler = proc_douintvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= &maxval_12_bits,
-	},
-	{
-		.procname	= "sched_burst_cache_lifetime",
-		.data		= &sched_burst_cache_lifetime,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler = proc_douintvec,
 	},
 #endif // CONFIG_SCHED_BORE
 	{
