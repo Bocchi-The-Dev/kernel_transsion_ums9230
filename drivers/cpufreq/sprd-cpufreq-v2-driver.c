@@ -732,36 +732,13 @@ static struct device_node *sprd_cluster_node_init(u32 cpu_idx)
  * On the T606 the stock max is 1612 MHz on both clusters.  This probe hunts
  * for a combination of (bin, version) that makes the TEE hand out a higher
  * table, purely read-only: it never calls freq_set(), so the running clocks
- * are untouched.
- *
- * Safety design (the boot-time sweep can wedge the TEE on out-of-range
- * bins/versions, so it must NEVER run automatically):
- *  - Boot-time run is opt-in via the "oc_probe" module parameter
- *    (cmdline: sprd_cpufreq_v2.oc_probe=1).  Default: off.
- *  - The sweep can be re-triggered any time by writing to the proc node:
- *        echo 1 > /proc/sprd_cpufreq_oc_probe
- *  - Every SMC step is pr_info()-logged, so dmesg pinpoints the exact
- *    combination before any hang.
- *  - pair_get() is only issued for a sane entry count (1..64); a garbage
- *    count is logged and skipped instead of calling pair_get(n-1) with an
- *    out-of-bounds index.
- * Results are dumped to /proc/sprd_cpufreq_oc_probe.
+ * are untouched.  Results are dumped to /proc/sprd_cpufreq_oc_probe.
  */
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/moduleparam.h>
 
 static char oc_probe_buf[8192];
 static int oc_probe_pos;
-
-static bool oc_probe_boot;
-module_param(oc_probe, bool, 0644);
-MODULE_PARM_DESC(oc_probe,
-	"run the TEE DVFS bin/version table sweep once at probe time "
-	"(cmdline: sprd_cpufreq_v2.oc_probe=1). Default off; re-trigger any "
-	"time via 'echo 1 > /proc/sprd_cpufreq_oc_probe'");
-
-#define OC_PROBE_MAX_ENTRIES	64U
 
 static void oc_probe_printf(const char *fmt, ...)
 {
@@ -789,51 +766,21 @@ static int oc_probe_open(struct inode *inode, struct file *file)
 	return single_open(file, oc_probe_show, NULL);
 }
 
-/*
- * Fetch the TEE table for the currently-selected (bin, version) and log the
- * top entry.  Guards pair_get() against an out-of-bounds index derived from a
- * garbage/empty entry count.  Everything is mirrored to dmesg so a hang in a
- * later SMC leaves a trail of what already succeeded.
- */
-static void oc_probe_log_table(struct cluster_info *cluster, const char *what)
-{
-	u64 freq = 0, volt = 0;
-	u32 count = 0;
-
-	if (cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT, &count)) {
-		oc_probe_printf("  %s tbl-fail\n", what);
-		pr_info("cpuoc: cluster%u %s tbl-fail\n", cluster->id, what);
-		return;
-	}
-
-	if (count == 0 || count > OC_PROBE_MAX_ENTRIES) {
-		oc_probe_printf("  %s entries=%u (invalid, skipped)\n", what, count);
-		pr_info("cpuoc: cluster%u %s entries=%u (invalid, skipped)\n",
-			cluster->id, what, count);
-		return;
-	}
-
-	if (cluster->pair_get(cluster->id, count - 1, &freq, &volt)) {
-		oc_probe_printf("  %s entries=%u pair(%u)-fail\n", what, count, count - 1);
-		pr_info("cpuoc: cluster%u %s entries=%u pair-fail\n",
-			cluster->id, what, count);
-		return;
-	}
-
-	oc_probe_printf("  %s entries=%u top=%lluHz %lluuV\n", what, count, freq, volt);
-	pr_info("cpuoc: cluster%u %s entries=%u top=%lluHz %lluuV\n",
-		cluster->id, what, count, freq, volt);
-}
+static const struct file_operations oc_probe_fops = {
+	.owner = THIS_MODULE,
+	.open = oc_probe_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 static void sprd_cpufreq_oc_probe(void)
 {
 	static const char * const oc_vers[] = { "T606", "T612", "T616", "T619" };
 	struct cluster_info *cluster;
-	u64 orig_tok = 0, tok = 0;
+	u64 orig_tok = 0, tok = 0, f, v;
 	u64 *cluster_version;
-	int saved_temp;
-	u32 orig_bin;
-	char what[24];
+	u32 orig_bin, n;
 	int ci, bi, vi;
 
 	oc_probe_pos = 0;
@@ -848,83 +795,58 @@ static void sprd_cpufreq_oc_probe(void)
 
 		mutex_lock(&cluster->mutex);
 
-		saved_temp = cluster->temp_currt_node->temp;
-
 		oc_probe_printf("cluster%d (orig bin=%#x", ci, orig_bin);
 		if (cluster_version)
 			oc_probe_printf(", version=%llu)", orig_tok);
 		oc_probe_printf("\n");
-		pr_info("cpuoc: cluster%u sweep start (orig bin=%#x%s%llu temp=%d)\n",
-			ci, orig_bin, cluster_version ? ", ver=" : "",
-			cluster_version ? orig_tok : 0ULL, saved_temp);
 
 		/* sweep dvfs_bin: 0..63 */
 		for (bi = 0; bi < 64; bi++) {
-			snprintf(what, sizeof(what), "bin=%#x", bi);
-			if (cluster->bin_set(cluster->id, bi)) {
-				oc_probe_printf("  %s set-fail\n", what);
-				pr_info("cpuoc: cluster%u %s set-fail\n", ci, what);
-				continue;
-			}
-			oc_probe_log_table(cluster, what);
+			n = 0; f = 0; v = 0;
+			if (cluster->bin_set(cluster->id, bi))
+				oc_probe_printf("  bin=%#x set-fail\n", bi);
+			else if (cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT, &n))
+				oc_probe_printf("  bin=%#x tbl-fail\n", bi);
+			else if (cluster->pair_get(cluster->id, n - 1, &f, &v))
+				oc_probe_printf("  bin=%#x pair(%u)-fail\n", bi, n);
+			else
+				oc_probe_printf("  bin=%#x entries=%u top=%lluHz %lluuV\n",
+						 bi, n, f, v);
 		}
 
 		/* restore the real bin */
-		if (cluster->bin_set(cluster->id, orig_bin))
-			pr_info("cpuoc: cluster%u restore bin=%#x fail\n", ci, orig_bin);
-		else
-			pr_info("cpuoc: cluster%u restore bin=%#x ok\n", ci, orig_bin);
+		cluster->bin_set(cluster->id, orig_bin);
 
 		/* sweep SoC version tokens (multi-version clusters) */
 		if (cluster_version) {
 			for (vi = 0; vi < ARRAY_SIZE(oc_vers); vi++) {
 				memset(&tok, 0, sizeof(tok));
 				memcpy(&tok, oc_vers[vi], strlen(oc_vers[vi]));
-				snprintf(what, sizeof(what), "ver=%s", oc_vers[vi]);
-				if (cluster->version_set(cluster->id, &tok)) {
-					oc_probe_printf("  %s set-fail\n", what);
-					pr_info("cpuoc: cluster%u %s set-fail\n", ci, what);
-					continue;
-				}
-				oc_probe_log_table(cluster, what);
+				n = 0; f = 0; v = 0;
+				if (cluster->version_set(cluster->id, &tok))
+					oc_probe_printf("  ver=%s set-fail\n", oc_vers[vi]);
+				else if (cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT, &n))
+					oc_probe_printf("  ver=%s tbl-fail\n", oc_vers[vi]);
+				else if (cluster->pair_get(cluster->id, n - 1, &f, &v))
+					oc_probe_printf("  ver=%s pair(%u)-fail\n", oc_vers[vi], n);
+				else
+					oc_probe_printf("  ver=%s entries=%u top=%lluHz %lluuV\n",
+							 oc_vers[vi], n, f, v);
 			}
 			/* restore the real version */
-			if (cluster->version_set(cluster->id, &orig_tok))
-				pr_info("cpuoc: cluster%u restore version fail\n", ci);
-			else
-				pr_info("cpuoc: cluster%u restore version ok\n", ci);
+			cluster->version_set(cluster->id, &orig_tok);
 		}
 
-		/* restore the table state that was in effect before the sweep */
-		if (cluster->table_update(cluster->id, saved_temp,
-					  &cluster->table_entry_num))
-			pr_info("cpuoc: cluster%u restore table (temp=%d) fail\n",
-				ci, saved_temp);
-		else
-			pr_info("cpuoc: cluster%u restore table (temp=%d) ok\n",
-				ci, saved_temp);
+		/* restore the real table before cpufreq core init */
+		cluster->table_update(cluster->id, DVFS_TEMP_LOW_LIMIT,
+				      &cluster->table_entry_num);
 
 		mutex_unlock(&cluster->mutex);
 	}
 
+	proc_create("sprd_cpufreq_oc_probe", 0444, NULL, &oc_probe_fops);
 	oc_probe_printf("# end\n");
 }
-
-static ssize_t oc_probe_write(struct file *file, const char __user *buf,
-			      size_t count, loff_t *ppos)
-{
-	sprd_cpufreq_oc_probe();
-	return count;
-}
-
-static const struct file_operations oc_probe_fops = {
-	.owner = THIS_MODULE,
-	.open = oc_probe_open,
-	.read = seq_read,
-	.write = oc_probe_write,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
 #endif /* CONFIG_SPRD_CPU_OC_PROBE */
 
 static int sprd_cluster_info_init(struct cluster_info *clusters)
@@ -1015,9 +937,7 @@ static int sprd_cpufreq_probe(struct platform_device *pdev)
 	}
 
 #ifdef CONFIG_SPRD_CPU_OC_PROBE
-	proc_create("sprd_cpufreq_oc_probe", 0644, NULL, &oc_probe_fops);
-	if (oc_probe_boot)
-		sprd_cpufreq_oc_probe();
+	sprd_cpufreq_oc_probe();
 #endif
 
 	ret = cpufreq_register_driver(&sprd_cpufreq_driver);
