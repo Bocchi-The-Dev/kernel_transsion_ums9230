@@ -1,0 +1,218 @@
+name: BUILD-DEBUG
+
+# A diagnostic kernel, not a daily-driver kernel.
+#
+# This board has NO serial console. A bad kernel does not fail loudly on
+# this device -- it hangs, and there is no way to see why. The last
+# experimental flash (a 4494-file backport) produced exactly that: no
+# console, no ramoops record, no sysdump entry, nothing to diagnose from.
+#
+# This workflow exists so that the NEXT failure is legible. It turns a hang
+# into a panic, and makes the panic survive where it can be read back.
+#
+# It deliberately does NOT do anything exotic: no scheduler changes, no
+# driver work, no performance tuning. Every option below exists to make a
+# failure explain itself.
+#
+# How to read a panic after flashing this:
+#   1. Do NOT power-cycle the phone. A forced power-off destroys the very
+#      pstore record you need. Let it sit on the panic screen.
+#   2. Reboot into fastboot, then dump the ramoops partition and decompress:
+#        fastboot fetch --partition ramoops-partition   (if supported)
+#      or read it over fastboot's download protocol, then
+#        lz4 -d / python-lzo   against CONFIG_PSTORE_COMPRESS_DEFAULT=deflate
+#      The deflate backend is what CONFIG_PSTORE_DEFLATE_COMPRESS_DEFAULT
+#      selects, so `python-lzma`/zlib --not-- lz4 is the right decompressor.
+#   3. `dmesg` after a clean reboot will NOT contain it; pstore is a
+#      separate buffer that survives only until the next power loss.
+#
+# Everything here is one of: a panic trigger, a bigger buffer, or symbol
+# resolution. Nothing here changes runtime behaviour on a healthy boot
+# except that a hung task will now reboot the phone instead of hanging it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ debug ]
+
+jobs:
+  build-debug:
+    runs-on: ubuntu-22.04
+    env:
+      # NB: keep these literals -- the `runner` context is not available in
+      # jobs.<id>.env, and referencing it there fails workflow validation.
+      CLANG_DIR: /tmp/clang-r416183b
+      # Same toolchain and target triple as main.yml. The CROSS_COMPILE
+      # prefix is load-bearing: without it clang compiles for the host and
+      # the arm64 inline asm dies in asm/atomic_lse.h.
+      MAKE_ARGS: LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # drivers/kernelsu is a symlink into the KernelSU-Next submodule.
+          # Without this the link dangles and the build dies with
+          # "drivers/kernelsu: No such file or directory".
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch the reference toolchain (clang-r416183b)
+        run: |
+          curl -sSL -o /tmp/clang.tar.gz \
+            https://codeload.github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b/tar.gz/refs/heads/lineage-20.0
+          mkdir -p "$CLANG_DIR"
+          tar xzf /tmp/clang.tar.gz -C "$CLANG_DIR" --strip-components=1
+          rm -f /tmp/clang.tar.gz
+          echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: clang --version
+
+      - name: Configure (bg6_defconfig)
+        run: |
+          make $MAKE_ARGS bg6_defconfig
+          echo "kernelrelease: $(make $MAKE_ARGS -s kernelrelease)"
+
+      # ---------------------------------------------------------------------
+      # TIER 0: make a failure legible.
+      #
+      # Symbol names here are the 5.4 ones, verified against this tree's
+      # Kconfig. Note what is NOT used and why:
+      #
+      #   CONFIG_HARDLOCKUP_PANIC          does not exist in 5.4
+      #   CONFIG_PSTORE_DEFAULT_KMSG_BYTES  does not exist in 5.4
+      #
+      # In 5.4 the hardlockup panic is spelled BOOTPARAM_HARDLOCKUP_PANIC
+      # (lib/Kconfig.debug:952), and pstore buffer sizing is NOT a Kconfig
+      # integer at all -- it comes from the ramoops `size` / `record-size` /
+      # `console-size` properties in the device tree. Raising the pstore
+      # buffer therefore means editing reserved-memory/ramoops@fff80000 and
+      # growing the reservation, which is a device-tree change, not a config
+      # change. That is deliberately NOT done here: enlarging the ramoops
+      # region changes the memory map, and a wrong size there is a far worse
+      # failure than an undersized log.
+      #
+      # Confirmed already-set in bg6_defconfig, so listed for the record and
+      # asserted rather than changed: PSTORE, PSTORE_RAM, PSTORE_CONSOLE,
+      # PSTORE_PMSG, PSTORE_COMPRESS, PSTORE_DEFLATE_COMPRESS_DEFAULT,
+      # PANIC_ON_OOPS, PANIC_TIMEOUT=5, DEBUG_INFO, MAGIC_SYSRQ, KALLSYMS.
+      # The live device tree does carry a ramoops node
+      # (reserved-memory/ramoops@fff80000), so pstore has somewhere to land.
+      # ---------------------------------------------------------------------
+      - name: Apply TIER 0 diagnostic config
+        run: |
+          set -euo pipefail
+          S=./scripts/config
+
+          # --- assert the baseline we are depending on -----------------------
+          # If bg6_defconfig ever stops providing pstore, every option below
+          # becomes a no-op and the kernel silently loses its crash log. Fail
+          # the build instead of shipping a diagnostic image that cannot
+          # diagnose anything.
+          for sym in CONFIG_PSTORE CONFIG_PSTORE_RAM CONFIG_PSTORE_COMPRESS \
+                     CONFIG_PANIC_ON_OOPS CONFIG_DEBUG_INFO; do
+            grep -qx "$sym=y" .config || { echo "::error::baseline lost $sym"; exit 1; }
+          done
+
+          # --- turn a hang into a panic -------------------------------------
+          # 5.4 names. HARDLOCKUP_DETECTOR is the 5.4 spelling; there is no
+          # CONFIG_HARDLOCKUP_PANIC here.
+          $S --enable  HARDLOCKUP_DETECTOR
+          $S --enable  BOOTPARAM_HARDLOCKUP_PANIC
+          $S --set-val BOOTPARAM_HARDLOCKUP_PANIC_VALUE 1
+          $S --enable  SOFTLOCKUP_DETECTOR
+          $S --enable  BOOTPARAM_SOFTLOCKUP_PANIC
+          $S --set-val BOOTPARAM_SOFTLOCKUP_PANIC_VALUE 1
+
+          # --- hung tasks: detect, then panic ------------------------------
+          # DETECT_HUNG_TASK is off in bg6_defconfig. Without it a task stuck
+          # in D state is invisible. 120s is deliberately generous: init and
+          # zygote legitimately block for a long time on a cold boot, and a
+          # 30s threshold would panic on a healthy system.
+          $S --enable  DETECT_HUNG_TASK
+          $S --set-val DEFAULT_HUNG_TASK_TIMEOUT 120
+          $S --enable  BOOTPARAM_HUNG_TASK_PANIC
+          $S --set-val BOOTPARAM_HUNG_TASK_PANIC_VALUE 1
+
+          # --- do not sit on the panic screen forever -----------------------
+          # A device that reboots on its own can be recovered over adb; one
+          # wedged on a panic screen cannot. 60s is long enough to read the
+          # backtrace off the screen with no serial console, short enough that
+          # the phone comes back on its own.
+          $S --set-val PANIC_TIMEOUT 60
+
+          # --- room to actually print the reason ---------------------------
+          # Default is 17 (128K). A hung-task dump with a full backtrace runs
+          # well past that, and the overflow is exactly the part that tells you
+          # what hung. 21 is 2M.
+          $S --set-val LOG_BUF_SHIFT 21
+
+          # --- make the backtrace symbolisable -----------------------------
+          # KALLSYMS_ALL gives addresses in the panic backtrace that resolve
+          # without a matching vmlinux. This is the difference between a
+          # usable crash log and a column of hex.
+          $S --enable  KALLSYMS_ALL
+          $S --disable KALLSYMS_ALL_DATA   # smaller image; names are enough
+
+          make $MAKE_ARGS olddefconfig
+
+          echo "--- TIER 0 result ---"
+          grep -E 'HARDLOCKUP|SOFTLOCKUP|HUNG_TASK|PANIC|LOG_BUF_SHIFT|KALLSYMS' .config || true
+
+          # Fail loudly rather than shipping an image that cannot diagnose.
+          for sym in CONFIG_DETECT_HUNG_TASK CONFIG_BOOTPARAM_HARDLOCKUP_PANIC \
+                     CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC CONFIG_BOOTPARAM_HUNG_TASK_PANIC \
+                     CONFIG_KALLSYMS_ALL; do
+            grep -qx "$sym=y" .config || { echo "::error::$sym did not stick"; exit 1; }
+          done
+          grep -qx "CONFIG_PANIC_TIMEOUT=60" .config || { echo "::error::PANIC_TIMEOUT did not stick"; exit 1; }
+          grep -qx "CONFIG_LOG_BUF_SHIFT=21"   .config || { echo "::error::LOG_BUF_SHIFT did not stick"; exit 1; }
+          echo "all TIER 0 options verified in .config"
+
+      - name: Build Image
+        run: make $MAKE_ARGS -j$(nproc) Image
+
+      - name: Report
+        run: |
+          echo "### Diagnostic kernel built" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo ""
+            echo "kernelrelease: \`$(make $MAKE_ARGS -s kernelrelease)\`"
+            echo ""
+            echo "This image panics on hardlockup, softlockup and hung task, and"
+            echo "reboots 60s after a panic. Flash it only when you intend to"
+            echo "diagnose a failure."
+            echo ""
+            echo "After a panic: **do not power-cycle.** Reboot to fastboot and read"
+            echo "the ramoops region before the next power loss destroys it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pack boot.img (magiskboot)
+        run: |
+          curl -sSL -o /tmp/magisk.apk \
+            "$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+               | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' \
+               | head -1)"
+          unzip -o -j /tmp/magisk.apk 'lib/x86_64/libmagiskboot.so' -d /tmp
+          chmod +x /tmp/libmagiskboot.so
+          mkdir -p /tmp/bootwork && cd /tmp/bootwork
+          /tmp/libmagiskboot.so unpack "$GITHUB_WORKSPACE/boot-gsi.img"
+          cp "$GITHUB_WORKSPACE/out/arch/arm64/boot/Image" kernel
+          /tmp/libmagiskboot.so repack "$GITHUB_WORKSPACE/boot-gsi.img"
+          mv new-boot.img "$GITHUB_WORKSPACE/boot-DEBUG.img"
+          ls -la "$GITHUB_WORKSPACE/boot-DEBUG.img"
+
+      - name: Upload boot-DEBUG.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-DEBUG-${{ github.sha }}
+          path: boot-DEBUG.img
+          if-no-files-found: error
+
+      - name: Upload raw Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-DEBUG-${{ github.sha }}
+          path: out/arch/arm64/boot/Image
+          if-no-files-found: error
