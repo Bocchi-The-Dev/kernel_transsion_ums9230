@@ -295,6 +295,7 @@ int security_sb_mount(const char *dev_name, const struct path *path,
 		      const char *type, unsigned long flags, void *data);
 int security_sb_umount(struct vfsmount *mnt, int flags);
 int security_sb_pivotroot(const struct path *old_path, const struct path *new_path);
+int security_sb_delete(struct super_block *sb);
 int security_sb_set_mnt_opts(struct super_block *sb,
 				void *mnt_opts,
 				unsigned long kern_flags,
@@ -652,6 +653,10 @@ static inline int security_sb_umount(struct vfsmount *mnt, int flags)
 
 static inline int security_sb_pivotroot(const struct path *old_path,
 					const struct path *new_path)
+{
+	return 0;
+}
+static inline int security_sb_delete(struct super_block *sb)
 {
 	return 0;
 }
