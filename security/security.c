@@ -882,6 +882,13 @@ int security_sb_pivotroot(const struct path *old_path, const struct path *new_pa
 {
 	return call_int_hook(sb_pivotroot, 0, old_path, new_path);
 }
+int security_sb_delete(struct super_block *sb)
+{
+	call_int_hook(sb_delete, 0, sb);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(security_sb_delete);
+
 
 int security_sb_set_mnt_opts(struct super_block *sb,
 				void *mnt_opts,
