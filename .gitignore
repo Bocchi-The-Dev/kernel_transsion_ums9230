@@ -91,6 +91,11 @@ modules.order
 !.gitattributes
 !.gitignore
 !.mailmap
+# .github holds real source (the CI workflows), not build output. Without
+# this, the leading ".*" rule above excludes the whole directory and every
+# new workflow must be added with `git add -f` -- which is how
+# workflows/main.yml came to be tracked in the first place.
+!.github/
 
 #
 # Generated include files
