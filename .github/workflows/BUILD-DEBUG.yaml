@@ -103,7 +103,14 @@ jobs:
       - name: Apply TIER 0 diagnostic config
         run: |
           set -euo pipefail
-          S=./scripts/config
+          # MAKE_ARGS carries O=out, so the real config is out/.config and a
+          # bare .config does not exist. Derive it rather than hardcoding, so
+          # changing O= in MAKE_ARGS cannot silently break this step again.
+          O_DIR="$(sed -n 's/.*O=\([^ ]*\).*/\1/p' <<< "$MAKE_ARGS")"
+          test -n "$O_DIR" || { echo "::error::could not find O= in MAKE_ARGS"; exit 1; }
+          CONFIG="$O_DIR/.config"
+          test -f "$CONFIG" || { echo "::error::$CONFIG missing after defconfig"; exit 1; }
+          S="./scripts/config --file $CONFIG"
 
           # --- assert the baseline we are depending on -----------------------
           # If bg6_defconfig ever stops providing pstore, every option below
@@ -112,18 +119,47 @@ jobs:
           # diagnose anything.
           for sym in CONFIG_PSTORE CONFIG_PSTORE_RAM CONFIG_PSTORE_COMPRESS \
                      CONFIG_PANIC_ON_OOPS CONFIG_DEBUG_INFO; do
-            grep -qx "$sym=y" .config || { echo "::error::baseline lost $sym"; exit 1; }
+            grep -qx "$sym=y" "$CONFIG" || { echo "::error::baseline lost $sym"; exit 1; }
           done
 
-          # --- turn a hang into a panic -------------------------------------
-          # 5.4 names. HARDLOCKUP_DETECTOR is the 5.4 spelling; there is no
-          # CONFIG_HARDLOCKUP_PANIC here.
-          $S --enable  HARDLOCKUP_DETECTOR
-          $S --enable  BOOTPARAM_HARDLOCKUP_PANIC
-          $S --set-val BOOTPARAM_HARDLOCKUP_PANIC_VALUE 1
+          # --- softlockup panic (hard requirement) -------------------------
           $S --enable  SOFTLOCKUP_DETECTOR
           $S --enable  BOOTPARAM_SOFTLOCKUP_PANIC
           $S --set-val BOOTPARAM_SOFTLOCKUP_PANIC_VALUE 1
+
+          # --- hardlockup panic (BEST EFFORT, see below) -------------------
+          # On 5.4/arm64 this cannot be enabled. HARDLOCKUP_DETECTOR depends on
+          # HAVE_HARDLOCKUP_DETECTOR_PERF || HAVE_HARDLOCKUP_DETECTOR_ARCH, and
+          # in this tree HAVE_HARDLOCKUP_DETECTOR_PERF is selected only by
+          # arch/powerpc and arch/x86 -- arm64 selects neither. So the whole
+          # option is unavailable on this architecture in 5.4, independent of
+          # any config we set. Attempt it anyway in case the kernel is ever
+          # rebased onto a tree that has arm64 support, but do NOT fail the
+          # build over it, and say so loudly rather than pretending.
+          if $S --enable HARDLOCKUP_DETECTOR && \
+             $S --enable BOOTPARAM_HARDLOCKUP_PANIC && \
+             $S --set-val BOOTPARAM_HARDLOCKUP_PANIC_VALUE 1 && \
+             make $MAKE_ARGS olddefconfig && \
+             grep -qx "CONFIG_BOOTPARAM_HARDLOCKUP_PANIC=y" "$CONFIG"; then
+            echo "hardlockup panic: enabled"
+          else
+            {
+              echo "### hardlockup panic unavailable"
+              echo ""
+              echo "This kernel cannot detect hardlockups."
+              echo "\`CONFIG_HARDLOCKUP_DETECTOR\` depends on"
+              echo "\`HAVE_HARDLOCKUP_DETECTOR_PERF || HAVE_HARDLOCKUP_DETECTOR_ARCH\`, and on"
+              echo "5.4/arm64 neither is available (PERF-based support is selected"
+              echo "only by powerpc and x86). Softlockup panic and hung-task panic"
+              echo "are active, and they cover the cases that matter in practice:"
+              echo "a task stuck in D state, or the kernel spinning with interrupts"
+              echo "still enabled. A true hardlockup -- interrupts disabled, CPU"
+              echo "spinning in kernel mode -- will not be caught by this image."
+              echo ""
+              echo "Adding arm64 hardlockup detection is a real backport candidate."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::hardlockup panic unavailable on 5.4/arm64 (arch limitation, not a config error). Softlockup + hung-task panic are active."
+          fi
 
           # --- hung tasks: detect, then panic ------------------------------
           # DETECT_HUNG_TASK is off in bg6_defconfig. Without it a task stuck
@@ -158,17 +194,21 @@ jobs:
           make $MAKE_ARGS olddefconfig
 
           echo "--- TIER 0 result ---"
-          grep -E 'HARDLOCKUP|SOFTLOCKUP|HUNG_TASK|PANIC|LOG_BUF_SHIFT|KALLSYMS' .config || true
+          grep -E 'HARDLOCKUP|SOFTLOCKUP|HUNG_TASK|PANIC|LOG_BUF_SHIFT|KALLSYMS' "$CONFIG" || true
 
           # Fail loudly rather than shipping an image that cannot diagnose.
-          for sym in CONFIG_DETECT_HUNG_TASK CONFIG_BOOTPARAM_HARDLOCKUP_PANIC \
+          # Hardlockup is deliberately absent from this list: it is an
+          # architectural limitation of 5.4/arm64, not a config error, and
+          # gating the whole diagnostic kernel on it would make the workflow
+          # permanently unbuildable.
+          for sym in CONFIG_DETECT_HUNG_TASK \
                      CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC CONFIG_BOOTPARAM_HUNG_TASK_PANIC \
                      CONFIG_KALLSYMS_ALL; do
-            grep -qx "$sym=y" .config || { echo "::error::$sym did not stick"; exit 1; }
+            grep -qx "$sym=y" "$CONFIG" || { echo "::error::$sym did not stick"; exit 1; }
           done
-          grep -qx "CONFIG_PANIC_TIMEOUT=60" .config || { echo "::error::PANIC_TIMEOUT did not stick"; exit 1; }
-          grep -qx "CONFIG_LOG_BUF_SHIFT=21"   .config || { echo "::error::LOG_BUF_SHIFT did not stick"; exit 1; }
-          echo "all TIER 0 options verified in .config"
+          grep -qx "CONFIG_PANIC_TIMEOUT=60" "$CONFIG" || { echo "::error::PANIC_TIMEOUT did not stick"; exit 1; }
+          grep -qx "CONFIG_LOG_BUF_SHIFT=21"   "$CONFIG" || { echo "::error::LOG_BUF_SHIFT did not stick"; exit 1; }
+          echo "all TIER 0 options verified in $CONFIG"
 
       - name: Build Image
         run: make $MAKE_ARGS -j$(nproc) Image
