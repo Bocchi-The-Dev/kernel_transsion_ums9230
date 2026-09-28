@@ -148,12 +148,8 @@
  *	@new_path contains the path for the new root (new_root).
  *	Return 0 if permission is granted.
  * @sb_delete:
- *	Called when a superblock is being deleted, before its inodes are
- *	disassociated from it.
- *	@sb contains the superblock being deleted.
- *	Return 0 on success, non-zero on error.
- *	Cannot usefully return an error code.
- *	Always returns 0.
+ *	Release objects tied to a superblock (e.g. inodes).
+ *	@sb contains the super_block structure being released.
  * @sb_set_mnt_opts:
  *	Set the security relevant mount options used for a superblock
  *	@sb the superblock to set security mount options for
