@@ -251,8 +251,75 @@ jobs:
           grep -qx "CONFIG_LOG_BUF_SHIFT=21"   "$CONFIG" || { echo "::error::LOG_BUF_SHIFT did not stick"; exit 1; }
           echo "all TIER 0 options verified in $CONFIG"
 
+      # Landlock is the thing under test on this image, so it is enabled
+      # here and NOT in bg6_defconfig. Keeping it out of the defconfig
+      # means the everyday main.yml build is unaffected, and this step is
+      # the single place that turns it on.
+      #
+      # It has to be two changes, not one. CONFIG_SECURITY_LANDLOCK=y
+      # compiles security/landlock/*.c, but an LSM not named in
+      # CONFIG_LSM is never initialised -- it would sit in the image,
+      # inert, while every check around it reported success. So both the
+      # symbol and the ordering entry are set, and both are asserted.
+      - name: Enable Landlock (the feature under test)
+        run: |
+          set -euo pipefail
+          O_DIR="$(sed -n 's/.*O=\([^ ]*\).*/\1/p' <<< "$MAKE_ARGS")"
+          CONFIG="$O_DIR/.config"
+          S="./scripts/config --file $CONFIG"
+
+          $S --enable SECURITY_LANDLOCK
+
+          # prepend, never append, and only if not already present
+          LSM=$(sed -n 's/^CONFIG_LSM="\(.*\)"$/\1/p' "$CONFIG")
+          case ",$LSM," in
+            *,landlock,*) : ;;
+            *) LSM="landlock,$LSM" ;;
+          esac
+          $S --set-str LSM "$LSM"
+
+          make $MAKE_ARGS olddefconfig >/dev/null
+
+          for sym in CONFIG_SECURITY_LANDLOCK CONFIG_SECURITY_PATH; do
+            grep -qx "$sym=y" "$CONFIG" || { echo "::error::$sym did not stick"; exit 1; }
+          done
+          # assert on the FINAL value: read it back and check its head,
+          # rather than rebuilding the expected string from a value this
+          # step has already modified
+          FINAL=$(sed -n 's/^CONFIG_LSM="\(.*\)"$/\1/p' "$CONFIG")
+          case "$FINAL" in
+            landlock,*) : ;;
+            *) echo "::error::landlock is not first in CONFIG_LSM"; exit 1 ;;
+          esac
+          [ "$(printf '%s' "$FINAL" | tr ',' '\n' | grep -cx landlock)" -eq 1 ] || \
+            { echo "::error::landlock appears more than once in CONFIG_LSM"; exit 1; }
+          echo "landlock enabled"
+
       - name: Build Image
         run: make $MAKE_ARGS -j$(nproc) Image
+
+      # The failure this exists to catch: Landlock sat in the tree as 19
+      # files and 2466 lines that no build had ever touched, because
+      # CONFIG_SECURITY_LANDLOCK defaults to n -- so "make Image: 0
+      # errors" was true and meaningless at the same time, and I reported
+      # it as verification. A green build says nothing about code that
+      # was not compiled. Assert on the artefacts, not the exit status.
+      - name: Verify Landlock was actually compiled in
+        run: |
+          set -euo pipefail
+          missing=0
+          for o in cred object ruleset fs ptrace setup syscalls; do
+            if [ -f "out/security/landlock/$o.o" ]; then
+              echo "  ok     security/landlock/$o.o"
+            else
+              echo "::error::security/landlock/$o.o was NOT built"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          grep -qx "CONFIG_SECURITY_LANDLOCK=y" out/.config || {
+            echo "::error::out/.config lacks CONFIG_SECURITY_LANDLOCK=y"; exit 1; }
+          echo "all 7 Landlock objects built"
 
       - name: Report
         run: |
@@ -263,6 +330,18 @@ jobs:
             echo "subject: \`$(git log -1 --format=%s)\`"
             echo ""
             echo "kernelrelease: \`$(make $MAKE_ARGS -s kernelrelease)\`"
+            echo ""
+            echo "**Landlock is ENABLED on this image** and is the feature under"
+            echo "test. It has never run at boot before, which is exactly why the"
+            echo "diagnostic options are on it: a first-run LSM failure should give"
+            echo "you a backtrace, not the silent hang this board is prone to."
+            echo ""
+            echo "After flashing, confirm it is actually live:"
+            echo ""
+            echo '```'
+            echo "adb shell 'cat /sys/kernel/security/lsm'   # expect landlock first"
+            echo "adb shell 'dmesg | grep -i landlock'"
+            echo '```'
             echo ""
             echo "This image panics on hardlockup, softlockup and hung task, and"
             echo "reboots 60s after a panic. Flash it only when you intend to"
