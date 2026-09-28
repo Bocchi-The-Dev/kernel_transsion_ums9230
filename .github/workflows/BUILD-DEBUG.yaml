@@ -30,10 +30,32 @@ name: BUILD-DEBUG
 # resolution. Nothing here changes runtime behaviour on a healthy boot
 # except that a hung task will now reboot the phone instead of hanging it.
 
+# MANUAL TRIGGER ONLY. Deliberately no `push:`/`pull_request:` trigger.
+# main.yml already builds every push to susfs-testing; this workflow exists
+# to produce one image at a time, on request, when there is a specific
+# failure to go and look at. A diagnostic kernel that rebuilds itself on
+# every push is just a slower, noisier main.yml that nobody asked for.
+#
+#   gh workflow run BUILD-DEBUG.yaml --repo Bocchi-The-Dev/kernel_transsion_ums9230 \
+#       -f branch=susfs-testing
+#
 on:
   workflow_dispatch:
-  push:
-    branches: [ debug ]
+    inputs:
+      branch:
+        description: 'Branch to build the diagnostic kernel from'
+        required: false
+        default: 'susfs-testing'
+        type: string
+  # The old trigger was `push: branches: [ debug ]`, but no `debug` branch
+  # has ever existed, so it never fired. Dispatching by hand instead built
+  # the DEFAULT BRANCH (master), because the checkout step passed no `ref` --
+  # which meant this workflow spent its life building code nobody was about
+  # to flash. That is how it came to fail on the last_switch_count error
+  # that susfs-testing had already fixed: it was two commits stale and
+  # reporting a problem with a commit it was not even running.
+  # A diagnostic kernel is only worth building from the tree you intend to
+  # flash, so the ref is now an explicit input rather than an accident.
 
 jobs:
   build-debug:
@@ -56,6 +78,25 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true
+          # Without this the checkout silently uses the default branch,
+          # which is not the tree being tested. See the note on `on:` above.
+          ref: ${{ inputs.branch || 'susfs-testing' }}
+
+      - name: Show what is actually being built
+        run: |
+          set -euo pipefail
+          BRANCH="${{ inputs.branch || 'susfs-testing' }}"
+          echo "requested branch: $BRANCH"
+          echo "checked-out:       $(git rev-parse --short HEAD)"
+          echo "subject:           $(git log -1 --format=%s)"
+          # A typo'd branch must fail here, loudly, rather than 15 minutes
+          # later inside make.
+          if ! git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
+            echo "::error::no such remote branch: $BRANCH"
+            echo "available:"
+            git branch -r | sed 's/^/  /'
+            exit 1
+          fi
 
       - name: Fetch the reference toolchain (clang-r416183b)
         run: |
@@ -218,11 +259,17 @@ jobs:
           echo "### Diagnostic kernel built" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
+            echo "branch: \`${{ inputs.branch || 'susfs-testing' }}\` @ \`$(git rev-parse --short HEAD)\`"
+            echo "subject: \`$(git log -1 --format=%s)\`"
+            echo ""
             echo "kernelrelease: \`$(make $MAKE_ARGS -s kernelrelease)\`"
             echo ""
             echo "This image panics on hardlockup, softlockup and hung task, and"
             echo "reboots 60s after a panic. Flash it only when you intend to"
             echo "diagnose a failure."
+            echo ""
+            echo "**Check the branch and commit above match the tree you meant to"
+            echo "flash.** This image is built from that ref and nothing else."
             echo ""
             echo "After a panic: **do not power-cycle.** Reboot to fastboot and read"
             echo "the ramoops region before the next power loss destroys it."
