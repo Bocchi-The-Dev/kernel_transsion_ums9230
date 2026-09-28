@@ -930,10 +930,16 @@ struct task_struct {
 	struct sysv_sem			sysvsem;
 	struct sysv_shm			sysvshm;
 #endif
-#ifdef CONFIG_DETECT_HUNG_TASK
-	unsigned long			last_switch_count;
-	unsigned long			last_switch_time;
-#endif
+	/* last_switch_count / last_switch_time used to be declared here under
+	 * #ifdef CONFIG_DETECT_HUNG_TASK. They are also carved out of the KABI
+	 * reserved slots further down by _ANDROID_KABI_REPLACE(...), which is
+	 * unconditional and additionally provides used_for_hung_task. With both
+	 * present, enabling CONFIG_DETECT_HUNG_TASK made the compiler reject
+	 * struct task_struct: "member of anonymous union redeclares
+	 * 'last_switch_count'". Declared only in the KABI slot below, so
+	 * removing this block changes nothing when the option is off -- which is
+	 * how the tree has always been built -- and makes the option usable.
+	 */
 	/* Filesystem information: */
 	struct fs_struct		*fs;
 
