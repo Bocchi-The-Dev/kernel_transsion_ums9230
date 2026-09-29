@@ -81,11 +81,6 @@ int __fsverity_verify_signature(const struct inode *inode, const u8 *signature,
 		return 0;
 	}
 
-	if (sig_size > desc_size - sizeof(*desc)) {
-		fsverity_err(inode, "Signature overflows verity descriptor");
-		return -EBADMSG;
-	}
-
 	if (fsverity_keyring->keys.nr_leaves_on_tree == 0) {
 		/*
 		 * The ".fs-verity" keyring is empty, due to builtin signatures
