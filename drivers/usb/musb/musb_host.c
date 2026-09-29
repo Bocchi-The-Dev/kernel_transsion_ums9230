@@ -327,10 +327,16 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 	 */
 	qh = musb_ep_get_qh(hw_ep, is_in);
 
+	/*
+	 * musb->lock had been unlocked in musb_giveback, so qh may
+	 * be freed, need to get it again
+	 */
+	qh = musb_ep_get_qh(hw_ep, is_in);
+
 	/* reclaim resources (and bandwidth) ASAP; deschedule it, and
 	 * invalidate qh as soon as list_empty(&hep->urb_list)
 	 */
-	if (qh != NULL && list_empty(&qh->hep->urb_list)) {
+	if (qh && list_empty(&qh->hep->urb_list)) {
 		struct list_head	*head;
 		struct dma_controller	*dma = musb->dma_controller;
 
@@ -2907,6 +2913,7 @@ static int musb_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 			 * and its URB list has emptied, recycle this qh.
 			 */
 			if (qh->is_ready && list_empty(&qh->hep->urb_list)) {
+				musb_ep_set_qh(qh->hw_ep, is_in, NULL);
 				qh->hep->hcpriv = NULL;
 				list_del(&qh->ring);
 				kfree(qh);

@@ -466,6 +466,47 @@ static int armada_xp_set_affinity(struct irq_data *d,
 
 	return IRQ_SET_MASK_OK;
 }
+#endif
+
+static struct irq_chip armada_370_xp_irq_chip = {
+	.name		= "MPIC",
+	.irq_mask       = armada_370_xp_irq_mask,
+	.irq_mask_ack   = armada_370_xp_irq_mask,
+	.irq_unmask     = armada_370_xp_irq_unmask,
+#ifdef CONFIG_SMP
+	.irq_set_affinity = armada_xp_set_affinity,
+#endif
+	.flags		= IRQCHIP_SKIP_SET_WAKE | IRQCHIP_MASK_ON_SUSPEND,
+};
+
+static int armada_370_xp_mpic_irq_map(struct irq_domain *h,
+				      unsigned int virq, irq_hw_number_t hw)
+{
+	/* IRQs 0 and 1 cannot be mapped, they are handled internally */
+	if (hw <= 1)
+		return -EINVAL;
+
+	armada_370_xp_irq_mask(irq_get_irq_data(virq));
+	if (!is_percpu_irq(hw))
+		writel(hw, per_cpu_int_base +
+			ARMADA_370_XP_INT_CLEAR_MASK_OFFS);
+	else
+		writel(hw, main_int_base + ARMADA_370_XP_INT_SET_ENABLE_OFFS);
+	irq_set_status_flags(virq, IRQ_LEVEL);
+
+	if (is_percpu_irq(hw)) {
+		irq_set_percpu_devid(virq);
+		irq_set_chip_and_handler(virq, &armada_370_xp_irq_chip,
+					handle_percpu_devid_irq);
+	} else {
+		irq_set_chip_and_handler(virq, &armada_370_xp_irq_chip,
+					handle_level_irq);
+		irqd_set_single_target(irq_desc_get_irq_data(irq_to_desc(virq)));
+	}
+	irq_set_probe(virq);
+
+	return 0;
+}
 
 static void armada_xp_mpic_smp_cpu_init(void)
 {
