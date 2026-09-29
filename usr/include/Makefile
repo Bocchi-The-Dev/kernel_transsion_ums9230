@@ -10,7 +10,22 @@ UAPI_CFLAGS := -std=c90 -Wall -Werror=implicit-function-declaration
 
 # In theory, we do not care -m32 or -m64 for header compile tests.
 # It is here just because CONFIG_CC_CAN_LINK is tested with -m32 or -m64.
-UAPI_CFLAGS += $(filter -m32 -m64 --target=%, $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS))
+#
+# Deliberately NOT picking up --target=% from KBUILD_CPPFLAGS/KBUILD_CFLAGS,
+# unlike upstream v5.4.302. Upstream added that in 25661f954 ("kbuild: add
+# --target to correctly cross-compile UAPI headers with Clang") on the
+# assumption that a cross toolchain ships a full target sysroot. Ours does
+# not: the Android clang is a bare compiler with host libraries only, so
+# compiling a UAPI header with --target=aarch64-linux-gnu makes clang
+# search a nonexistent aarch64 sysroot and it cannot find the libc headers
+# that exported headers legitimately include:
+#
+#   ./usr/include/linux/input.h:13:10: fatal error: 'sys/time.h' file not found
+#
+# That aborts the build at the HDRTEST step. The pre-merge tree already
+# dropped this line for the same reason; keep it dropped. -Wp,-MMD from
+# 445164274 is retained.
+UAPI_CFLAGS += $(filter -m32 -m64, $(KBUILD_CFLAGS))
 
 override c_flags = $(UAPI_CFLAGS) -Wp,-MMD,$(depfile) -I$(objtree)/usr/include
 
