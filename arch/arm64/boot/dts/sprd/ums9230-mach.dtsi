@@ -117,7 +117,15 @@
 			compatible = "ramoops";
 			reg = <0x0 0xfff80000 0x0 0x00040000>;
 			record-size = <0x8000>;
-			console-size = <0x8000>;
+			/*
+			 * 160K, up from the vendor's 32K. A 32K console ring
+			 * wraps well before a sysdump is taken, so a boot that
+			 * hangs loses the events that explain the hang.
+			 * record + pmsg stay at 32K; 0x8000 + 0x28000 + 0x8000
+			 * = 0x38000, inside the existing 0x40000 reservation, so
+			 * no reserved-memory layout changes.
+			 */
+			console-size = <0x28000>;
 			pmsg-size = <0x8000>;
 		};
 	};
