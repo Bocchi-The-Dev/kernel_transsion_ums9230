@@ -1818,8 +1818,8 @@ static void __cpufreq_offline(unsigned int cpu, struct cpufreq_policy *policy)
 	if (cpufreq_driver->exit)
 		cpufreq_driver->exit(policy);
 
-		policy->freq_table = NULL;
-	}
+	policy->freq_table = NULL;
+}
 
 static int cpufreq_offline(unsigned int cpu)
 {
