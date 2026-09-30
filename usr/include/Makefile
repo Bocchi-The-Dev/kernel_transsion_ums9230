@@ -10,7 +10,14 @@ UAPI_CFLAGS := -std=c90 -Wall -Werror=implicit-function-declaration
 
 # In theory, we do not care -m32 or -m64 for header compile tests.
 # It is here just because CONFIG_CC_CAN_LINK is tested with -m32 or -m64.
-UAPI_CFLAGS += $(filter -m32 -m64 --target=%, $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS))
+# Deliberately does not pick up --target=% from KBUILD_CPPFLAGS. This vendor
+# tree cross-builds as CC=clang with --target=aarch64-linux-gnu in
+# KBUILD_CPPFLAGS, and re-injecting it here puts the userspace header test
+# into cross mode, where clang searches for an aarch64 sysroot instead of the
+# host /usr/include. linux/input.h then cannot find <sys/time.h>. Upstream
+# 5.4.254 had no filter line here at all and so passed no cross flags; only
+# -m32/-m64 matter to this test (CONFIG_CC_CAN_LINK).
+UAPI_CFLAGS += $(filter -m32 -m64, $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS))
 
 override c_flags = $(UAPI_CFLAGS) -Wp,-MMD,$(depfile) -I$(objtree)/usr/include
 
