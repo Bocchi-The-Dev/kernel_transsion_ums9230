@@ -3082,7 +3082,7 @@ bool is_subdir(struct dentry *new_dentry, struct dentry *old_dentry)
 		return true;
 
 	/* Access d_parent under rcu as d_move() may change it. */
-		rcu_read_lock();
+	rcu_read_lock();
 	seq = read_seqbegin(&rename_lock);
 	subdir = d_ancestor(old_dentry, new_dentry);
 	 /* Try lockless once... */
