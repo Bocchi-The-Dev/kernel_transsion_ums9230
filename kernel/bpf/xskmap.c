@@ -18,10 +18,9 @@ struct xsk_map {
 
 int xsk_map_inc(struct xsk_map *map)
 {
-	struct bpf_map *m = &map->map;
-
-	m = bpf_map_inc(m, false);
-	return PTR_ERR_OR_ZERO(m);
+	/* Lineage bpf_map_inc() is void and always succeeds. */
+	bpf_map_inc(&map->map);
+	return 0;
 }
 
 void xsk_map_put(struct xsk_map *map)
