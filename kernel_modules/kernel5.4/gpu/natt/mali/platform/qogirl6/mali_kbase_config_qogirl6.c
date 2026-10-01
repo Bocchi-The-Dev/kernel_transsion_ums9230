@@ -52,12 +52,30 @@
 #define UP_THRESHOLD        9/10
 #define FREQ_KHZ            1000
 
-#define T606_GPLL_FREQ      650000000
+/* susfs-testing: T606/612 GPLL raised 650 -> 850 MHz (OC, T619 bin-equivalent).
+ * 850 MHz @ 800 mV is the certified top-bin combo from the qogirl6 DTS
+ * dvfs-lists (idx 8) and the GPLL PLL range covers it (ftable max 900 MHz);
+ * the T619 path already programs GPLL to 850 MHz on identical silicon.
+ * RISK: T606/612 dies are lower-binned than T619 - an individual chip may
+ * not hold 850 MHz @ 800 mV (GPU hangs/artifacts). If unstable on-device,
+ * drop back to 750000000 (T616 bin) or 650000000 (stock).
+ */
+#define T606_GPLL_FREQ      850000000
 #define T616_GPLL_FREQ      750000000
 //#define DEFAULT_GPLL_FREQ   800000000
 
 #define GPU_768M_FREQ       768000000
 #define GPU_850M_FREQ       850000000
+
+/*
+ * susfs-testing: default DVFS floor for normal (non-boost) operation.
+ * Index into the GPU freq_list parsed from "sprd,dvfs-lists":
+ *   0 = 384 MHz   1 = 512 MHz   2 = 614.4 MHz   3 = 768 MHz   4 = 850 MHz
+ * Raising it from 0 to 2 keeps the GPU at >= 614 MHz whenever it is
+ * active, giving a noticeable smoothing/performance increase at the cost
+ * of higher power draw. Set back to 0 for stock behaviour.
+ */
+#define GPU_DVFS_BOOST_MIN_INDEX	2
 
 struct gpu_qos_config {
 	u8 arqos;
@@ -935,6 +953,12 @@ void kbase_platform_limit_max_freq(struct device *dev)
 	//T616: GPLL max freq is 750M
 	// GPLL max freq is 850M
 	//printk(KERN_ERR "Jassmine kbase_platform_limit_max_freq auto_efuse, %s", auto_efuse);
+#if (T606_GPLL_FREQ < 850000000)
+	/* Stock GPLL ceiling (650/750 MHz) cannot clock the 768/850 bins: drop
+	 * those OPPs so devfreq/Franco never expose frequencies the PLL cannot
+	 * reach. The OC build (T606_GPLL_FREQ=850000000) keeps them from the DT
+	 * so available_frequencies shows up to 850 and the governor can drive
+	 * the full sprd,dvfs-lists range. */
 	if (!strcmp(auto_efuse, "T606") ||
 		!strcmp(auto_efuse, "T612") || !strcmp(auto_efuse, "T616"))
 	{
@@ -945,6 +969,7 @@ void kbase_platform_limit_max_freq(struct device *dev)
 		//add GPLL max freq
 		dev_pm_opp_add(dev, gpu_dvfs_ctx.freq_list[gpu_dvfs_ctx.freq_list_len-1].freq * FREQ_KHZ, gpu_dvfs_ctx.freq_list[gpu_dvfs_ctx.freq_list_len-1].volt);
 	}
+#endif
 }
 
 int kbase_platform_set_freq_volt(int freq, int volt)
@@ -991,7 +1016,7 @@ void kbase_platform_modify_target_freq(struct device *dev, unsigned long *target
 	case 0:
 	default:
 		freq_max = &gpu_dvfs_ctx.freq_list[gpu_dvfs_ctx.freq_list_len-1];
-		freq_min = &gpu_dvfs_ctx.freq_list[0];
+		freq_min = &gpu_dvfs_ctx.freq_list[GPU_DVFS_BOOST_MIN_INDEX];
 		break;
 	}
 

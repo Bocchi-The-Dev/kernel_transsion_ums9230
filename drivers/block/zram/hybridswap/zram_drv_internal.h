@@ -23,7 +23,7 @@
 
 #define zram_clear_flag(zram, index, flag) (zram->table[index].flags &= ~BIT(flag))
 
-#define zram_set_element(zram, index, element) (zram->table[index].element = element)
+#define zram_set_element(zram, index, _elem) (zram->table[index].element = _elem)
 
 #define zram_get_obj_size(zram, index) (zram->table[index].flags & (BIT(ZRAM_FLAG_SHIFT) - 1))
 

@@ -147,6 +147,9 @@
  *	current root (put_old).
  *	@new_path contains the path for the new root (new_root).
  *	Return 0 if permission is granted.
+ * @sb_delete:
+ *	Release objects tied to a superblock (e.g. inodes).
+ *	@sb contains the super_block structure being released.
  * @sb_set_mnt_opts:
  *	Set the security relevant mount options used for a superblock
  *	@sb the superblock to set security mount options for
@@ -1513,6 +1516,7 @@ union security_list_options {
 			const char *type, unsigned long flags, void *data);
 	int (*sb_umount)(struct vfsmount *mnt, int flags);
 	int (*sb_pivotroot)(const struct path *old_path, const struct path *new_path);
+	void (*sb_delete)(struct super_block *sb);
 	int (*sb_set_mnt_opts)(struct super_block *sb,
 				void *mnt_opts,
 				unsigned long kern_flags,
@@ -1872,6 +1876,7 @@ struct security_hook_heads {
 	struct hlist_head sb_mount;
 	struct hlist_head sb_umount;
 	struct hlist_head sb_pivotroot;
+	struct hlist_head sb_delete;
 	struct hlist_head sb_set_mnt_opts;
 	struct hlist_head sb_clone_mnt_opts;
 	struct hlist_head sb_add_mnt_opt;
@@ -2108,6 +2113,7 @@ struct lsm_blob_sizes {
 	int	lbs_cred;
 	int	lbs_file;
 	int	lbs_inode;
+	int	lbs_superblock;
 	int	lbs_ipc;
 	int	lbs_msg_msg;
 	int	lbs_task;
