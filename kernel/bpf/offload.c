@@ -305,6 +305,7 @@ int bpf_prog_offload_info_fill(struct bpf_prog_info *info,
 	void *res;
 	u32 ulen;
 
+	/* 5.4 ns_get_path_cb() returns ERR_PTR, not a negative errno. */
 	res = ns_get_path_cb(&ns_path, bpf_prog_offload_info_fill_ns, &args);
 	if (IS_ERR(res)) {
 		if (!info->ifindex)
@@ -528,6 +529,7 @@ int bpf_map_offload_info_fill(struct bpf_map_info *info, struct bpf_map *map)
 	struct path ns_path;
 	void *res;
 
+	/* 5.4 ns_get_path_cb() returns ERR_PTR, not a negative errno. */
 	res = ns_get_path_cb(&ns_path, bpf_map_offload_info_fill_ns, &args);
 	if (IS_ERR(res)) {
 		if (!info->ifindex)

@@ -518,4 +518,7 @@ drop:
 	return NULL;
 }
 
+struct sk_psock;
+struct proto *udp_bpf_get_proto(struct sock *sk, struct sk_psock *psock);
+
 #endif	/* _UDP_H */

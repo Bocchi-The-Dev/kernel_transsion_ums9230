@@ -37,6 +37,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/compat.h>
+#include <linux/time64.h>
 #include <linux/rculist.h>
 #include <net/busy_poll.h>
 
@@ -2369,6 +2370,46 @@ SYSCALL_DEFINE6(epoll_pwait, int, epfd, struct epoll_event __user *, events,
 	return error;
 }
 
+static int timespec64_to_ms_timeout(const struct timespec64 *ts)
+{
+	u64 ms;
+
+	if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= NSEC_PER_SEC)
+		return -EINVAL;
+	if (ts->tv_sec == 0 && ts->tv_nsec == 0)
+		return 0;
+
+	ms = (u64)ts->tv_sec * MSEC_PER_SEC +
+	     DIV_ROUND_UP(ts->tv_nsec, NSEC_PER_MSEC);
+	if (ms > INT_MAX)
+		return INT_MAX;
+	return (int)ms;
+}
+
+SYSCALL_DEFINE6(epoll_pwait2, int, epfd, struct epoll_event __user *, events,
+		int, maxevents, const struct __kernel_timespec __user *, timeout,
+		const sigset_t __user *, sigmask, size_t, sigsetsize)
+{
+	struct timespec64 ts;
+	int error, timeout_ms = -1;
+
+	if (timeout) {
+		if (get_timespec64(&ts, timeout))
+			return -EFAULT;
+		timeout_ms = timespec64_to_ms_timeout(&ts);
+		if (timeout_ms < 0)
+			return timeout_ms;
+	}
+
+	error = set_user_sigmask(sigmask, sigsetsize);
+	if (error)
+		return error;
+
+	error = do_epoll_wait(epfd, events, maxevents, timeout_ms);
+	restore_saved_sigmask_unless(error == -EINTR);
+	return error;
+}
+
 #ifdef CONFIG_COMPAT
 COMPAT_SYSCALL_DEFINE6(epoll_pwait, int, epfd,
 			struct epoll_event __user *, events,
@@ -2389,6 +2430,34 @@ COMPAT_SYSCALL_DEFINE6(epoll_pwait, int, epfd,
 	err = do_epoll_wait(epfd, events, maxevents, timeout);
 	restore_saved_sigmask_unless(err == -EINTR);
 
+	return err;
+}
+
+COMPAT_SYSCALL_DEFINE6(epoll_pwait2, int, epfd,
+		       struct epoll_event __user *, events,
+		       int, maxevents,
+		       const struct __kernel_timespec __user *, timeout,
+		       const compat_sigset_t __user *, sigmask,
+		       compat_size_t, sigsetsize)
+{
+	struct timespec64 ts;
+	int timeout_ms = -1;
+	long err;
+
+	if (timeout) {
+		if (get_timespec64(&ts, timeout))
+			return -EFAULT;
+		timeout_ms = timespec64_to_ms_timeout(&ts);
+		if (timeout_ms < 0)
+			return timeout_ms;
+	}
+
+	err = set_compat_user_sigmask(sigmask, sigsetsize);
+	if (err)
+		return err;
+
+	err = do_epoll_wait(epfd, events, maxevents, timeout_ms);
+	restore_saved_sigmask_unless(err == -EINTR);
 	return err;
 }
 #endif

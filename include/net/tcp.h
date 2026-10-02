@@ -345,6 +345,7 @@ void tcp_twsk_destructor(struct sock *sk);
 ssize_t tcp_splice_read(struct socket *sk, loff_t *ppos,
 			struct pipe_inode_info *pipe, size_t len,
 			unsigned int flags);
+void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks);
 
 static inline void tcp_dec_quickack_mode(struct sock *sk)
 {
@@ -1018,6 +1019,14 @@ enum tcp_ca_ack_event_flags {
 /* Requires ECN/ECT set on all packets */
 #define TCP_CONG_NEEDS_ECN	0x2
 
+/* Mask of all flags defined above.  Upstream grows this alongside each new
+ * flag bit; 5.4 has exactly the two above.  Used by BPF's TCP_CONG_OPS to
+ * reject bits it does not understand, so it must cover every bit we define
+ * and no others -- letting an unknown bit through would write a flag the
+ * kernel does not act on.
+ */
+#define TCP_CONG_MASK	(TCP_CONG_NON_RESTRICTED | TCP_CONG_NEEDS_ECN)
+
 union tcp_cc_info;
 
 struct ack_sample {
@@ -1090,6 +1099,7 @@ struct tcp_congestion_ops {
 	struct module 	*owner;
 };
 
+struct tcp_congestion_ops *tcp_ca_find(const char *name);
 int tcp_register_congestion_control(struct tcp_congestion_ops *type);
 void tcp_unregister_congestion_control(struct tcp_congestion_ops *type);
 
