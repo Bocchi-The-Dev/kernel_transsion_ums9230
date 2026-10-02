@@ -66,6 +66,9 @@ static int sprd_panel_unprepare(struct drm_panel *p)
 
 	DRM_INFO("%s()\n", __func__);
 
+	if (!panel->prepared)
+		return 0;
+
 	if (panel->info.reset_gpio) {
 		items = panel->info.rst_off_seq.items;
 		timing = panel->info.rst_off_seq.timing;
@@ -87,6 +90,7 @@ static int sprd_panel_unprepare(struct drm_panel *p)
 	}
 
 	regulator_disable(panel->supply);
+	panel->prepared = false;
 
 	return 0;
 }
@@ -122,6 +126,8 @@ static int sprd_panel_prepare(struct drm_panel *p)
 			mdelay(timing[i].delay);
 		}
 	}
+
+	panel->prepared = true;
 
 	return 0;
 }

@@ -110,6 +110,7 @@ struct sprd_panel {
 	struct delayed_work esd_work;
 	bool esd_work_pending;
 	struct mutex lock;
+	bool prepared;
 	bool enabled;
 	bool is_esd_rst;
 };
