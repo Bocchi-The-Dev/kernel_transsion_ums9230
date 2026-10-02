@@ -1019,6 +1019,14 @@ enum tcp_ca_ack_event_flags {
 /* Requires ECN/ECT set on all packets */
 #define TCP_CONG_NEEDS_ECN	0x2
 
+/* Mask of all flags defined above.  Upstream grows this alongside each new
+ * flag bit; 5.4 has exactly the two above.  Used by BPF's TCP_CONG_OPS to
+ * reject bits it does not understand, so it must cover every bit we define
+ * and no others -- letting an unknown bit through would write a flag the
+ * kernel does not act on.
+ */
+#define TCP_CONG_MASK	(TCP_CONG_NON_RESTRICTED | TCP_CONG_NEEDS_ECN)
+
 union tcp_cc_info;
 
 struct ack_sample {
