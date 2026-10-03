@@ -157,7 +157,7 @@ CONFIG_FAIR_GROUP_SCHED=y
 # CONFIG_CFS_BANDWIDTH is not set
 # CONFIG_RT_GROUP_SCHED is not set
 CONFIG_UCLAMP_TASK_GROUP=y
-# CONFIG_CGROUP_PIDS is not set
+CONFIG_CGROUP_PIDS=y
 # CONFIG_CGROUP_RDMA is not set
 CONFIG_CGROUP_FREEZER=y
 CONFIG_CPUSETS=y
@@ -6472,5 +6472,21 @@ CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
 CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 CONFIG_KSU_SUSFS_SUS_MAP=y
 # cgroup v2
-CONFIG_CGROUP2=y
+#
+# There is no CONFIG_CGROUP2 in 5.4 and never was: the v2 (unified) hierarchy
+# is not Kconfig-gated. kernel/cgroup/cgroup.c registers cgroup2_fs_type
+# unconditionally in cgroup_init(), and its files come from each controller's
+# .dfl_cftypes. So cgroup2 support is governed by CONFIG_CGROUPS=y (already
+# set above) plus having at least one controller with .dfl_cftypes.
+#
+# CONFIG_CGROUP_PIDS=y (above) is what gives the v2 mount a controller:
+# kernel/cgroup/pids.c sets both .dfl_cftypes and .legacy_cftypes, so pids
+# works on v1 and v2 simultaneously. In 5.4 a controller can only be bound
+# to one hierarchy at a time, and Android's init already holds cpuset, cpu,
+# blkio and memory on v1 (visible in /proc/cgroups on the device), so those
+# cannot also appear under /sys/fs/cgroup. pids is unbound, which is why it
+# is the one that can go on v2 without disturbing the Android userspace.
+#
+# A line reading "CONFIG_CGROUP2=y" here would be silently discarded by
+# defconfig -- kconfig drops unknown symbols without a warning.
 
