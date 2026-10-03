@@ -57,6 +57,22 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Expand KernelSU submodule history and tags
+        run: |
+          git -C KernelSU fetch --unshallow --tags
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # Same set, and for the same reasons, as main.yml: dwarves supplies
+          # pahole, without which the vmlinux link dies at
+          # "Failed to generate BTF for vmlinux" now that
+          # CONFIG_DEBUG_INFO_BTF=y; libc6-dev-arm64-cross supplies the glibc
+          # multilib headers that usr/include/Makefile needs for the UAPI
+          # header self-test. Keep the two lists in step.
+          sudo apt-get install -y flex bison bc cpio libssl-dev xz-utils dwarves \
+            libc6-dev-arm64-cross
+
       - name: Fetch the reference toolchain (clang-r416183b)
         run: |
           curl -sSL -o /tmp/clang.tar.gz \
