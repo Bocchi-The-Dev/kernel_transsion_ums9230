@@ -2722,6 +2722,7 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	spin_unlock(&swap_lock);
 
 	err = 0;
+	lru_gen_set_state(false, false, true); /* MGLRU: deactivate anon generational eviction */
 	atomic_inc(&proc_poll_event);
 	wake_up_interruptible(&proc_poll_wait);
 
@@ -3347,6 +3348,7 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		(frontswap_map) ? "FS" : "");
 
 	mutex_unlock(&swapon_mutex);
+	lru_gen_set_state(true, false, true); /* MGLRU: activate anon generational eviction */
 	atomic_inc(&proc_poll_event);
 	wake_up_interruptible(&proc_poll_wait);
 
