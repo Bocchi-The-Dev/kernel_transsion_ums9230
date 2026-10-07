@@ -55,7 +55,6 @@
 #include <linux/init.h>
 #include <linux/ksm.h>
 #include <linux/rmap.h>
-#include <linux/mm_inline.h>
 #include <linux/rcupdate.h>
 #include <linux/export.h>
 #include <linux/memcontrol.h>
@@ -782,11 +781,6 @@ static bool page_referenced_one(struct page *page, struct vm_area_struct *vma,
 		}
 
 		if (pvmw.pte) {
-			/* the multigenerational lru exploits the spatial locality */
-			if (lru_gen_enabled() && pte_young(*pvmw.pte)) {
-				lru_gen_scan_around(&pvmw);
-				referenced++;
-			}
 			if (ptep_clear_flush_young_notify(vma, address,
 						pvmw.pte)) {
 				/*
