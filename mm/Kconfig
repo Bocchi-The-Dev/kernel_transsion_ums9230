@@ -870,4 +870,5 @@ config TIERS_PER_GEN
 	  heavy buffered I/O workloads.
 # }
 
+source "mm/damon/Kconfig"
 endmenu
