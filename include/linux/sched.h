@@ -718,6 +718,14 @@ struct task_struct {
 	struct uclamp_se		uclamp[UCLAMP_CNT];
 #endif
 
+#ifdef CONFIG_TASKS_TRACE_RCU
+	int				trc_reader_nesting;
+	int				trc_ipi_to_cpu;
+	bool				trc_reader_need_end;
+	bool				trc_reader_checked;
+	struct list_head		trc_holdout_list;
+#endif /* #ifdef CONFIG_TASKS_TRACE_RCU */
+
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	/* List of struct preempt_notifier: */
 	struct hlist_head		preempt_notifiers;
@@ -1351,22 +1359,6 @@ struct task_struct {
 	 *
 	 * Do not put anything below here!
 	 */
-#ifdef CONFIG_TASKS_TRACE_RCU
-	/*
-	 * Kept after 'thread' deliberately: this restores the exact
-	 * pre-TRACE_RCU task_struct field offsets (byte-identical to
-	 * the d704b201 layout), so out-of-tree/binary-only modules
-	 * that embed task_struct offsets keep working.  Safe here on
-	 * arm64: thread_struct is fixed-size (the x86 warning above
-	 * concerns variable-sized FPU state only), and these fields
-	 * are touched exclusively by in-kernel RCU code.
-	 */
-	int				trc_reader_nesting;
-	int				trc_ipi_to_cpu;
-	bool				trc_reader_need_end;
-	bool				trc_reader_checked;
-	struct list_head		trc_holdout_list;
-#endif /* #ifdef CONFIG_TASKS_TRACE_RCU */
 };
 
 static inline struct pid *task_pid(struct task_struct *task)
