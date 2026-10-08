@@ -6570,6 +6570,8 @@ static unsigned long calc_decayed_watermark(struct mem_cgroup *group)
 	group->avg_next_update = now + jiffies_to_nsecs(2*HZ);
 	return 0;
 }
+#endif
+
 /*
  * This function calculates an individual cgroup's effective
  * protection which is derived from its own memory.min/low, its
