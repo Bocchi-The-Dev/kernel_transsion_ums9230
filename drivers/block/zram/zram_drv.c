@@ -33,6 +33,7 @@
 #include <linux/sysfs.h>
 #include <linux/debugfs.h>
 #include <linux/cpuhotplug.h>
+#include <linux/sysctl.h>
 
 #include "zram_drv.h"
 
@@ -50,6 +51,30 @@ static unsigned int num_devices = 1;
  * uncompressed in memory.
  */
 static size_t huge_class_size;
+
+#ifdef CONFIG_ZRAM_MULTI_COMP
+/*
+ * ZRAM-IR (immediate recompression, after firelzrd): on write, if the
+ * primary compressor cannot get the page under huge_class_size, try up to
+ * this many additional configured compressors before storing the page
+ * uncompressed. 0 = off. Has no effect unless recomp_algorithm is set.
+ */
+static unsigned int sysctl_zram_recomp_immediate = 1;
+static int zram_recomp_immediate_max = 3;
+static int zram_recomp_immediate_min;
+static struct ctl_table zram_sysctl_table[] = {
+	{
+		.procname	= "zram_recomp_immediate",
+		.data		= &sysctl_zram_recomp_immediate,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_douintvec_minmax,
+		.extra1		= &zram_recomp_immediate_min,
+		.extra2		= &zram_recomp_immediate_max,
+	},
+	{ }
+};
+#endif
 
 static void zram_free_page(struct zram *zram, size_t index);
 static int zram_bvec_read(struct zram *zram, struct bio_vec *bvec,
@@ -1607,12 +1632,14 @@ static int __zram_bvec_write(struct zram *zram, struct bio_vec *bvec,
 	unsigned long alloced_pages;
 	unsigned int comp_len = 0;
 	void *src, *dst, *mem;
-	struct zcomp_strm *zstrm;
+	struct zcomp_strm *zstrm = NULL;
+	struct zcomp *zc;
 	struct page *page = bvec->bv_page;
 	unsigned long element = 0;
 	enum zram_pageflags flags = 0;
 	struct zram_entry *entry = NULL;
 	u32 checksum;
+	u32 prio, prio_max, wprio = ZRAM_PRIMARY_COMP;
 
 	mem = kmap_atomic(page);
 	if (page_same_filled(mem, &element)) {
@@ -1631,20 +1658,45 @@ static int __zram_bvec_write(struct zram *zram, struct bio_vec *bvec,
 	}
 
 compress_again:
-	zstrm = zcomp_stream_get(zram->comps[ZRAM_PRIMARY_COMP]);
-	src = kmap_atomic(page);
-	ret = zcomp_compress(zstrm, src, &comp_len);
-	kunmap_atomic(src);
+	/*
+	 * Immediate multi-compressor trial. Dedup entries carry no priority,
+	 * so with dedup only the primary compressor is used.
+	 */
+	prio_max = 1;
+#ifdef CONFIG_ZRAM_MULTI_COMP
+	if (!zram_dedup_enabled(zram))
+		prio_max = min_t(u32, max_t(int, zram->num_active_comps, 1),
+				 READ_ONCE(sysctl_zram_recomp_immediate) + 1);
+#endif
+	zc = NULL;
+	for (prio = ZRAM_PRIMARY_COMP; prio < prio_max; prio++) {
+		if (!zram->comps[prio])
+			continue;
 
-	if (unlikely(ret)) {
-		zcomp_stream_put(zram->comps[ZRAM_PRIMARY_COMP]);
-		pr_err("Compression failed! err=%d\n", ret);
-		if (entry)
-			zram_entry_free(zram, entry);
-		return ret;
+		zc = zram->comps[prio];
+		wprio = prio;
+		zstrm = zcomp_stream_get(zc);
+		src = kmap_atomic(page);
+		ret = zcomp_compress(zstrm, src, &comp_len);
+		kunmap_atomic(src);
+
+		if (unlikely(ret)) {
+			zcomp_stream_put(zc);
+			pr_err("Compression failed! err=%d\n", ret);
+			if (entry)
+				zram_entry_free(zram, entry);
+			return ret;
+		}
+
+		if (comp_len < huge_class_size)
+			break;
+
+		/* too big: drop this stream and try the next compressor */
+		zcomp_stream_put(zc);
+		zc = NULL;
 	}
 
-	if (comp_len >= huge_class_size)
+	if (!zc)
 		comp_len = PAGE_SIZE;
 	/*
 	 * entry allocation has 2 paths:
@@ -1667,7 +1719,8 @@ compress_again:
 				__GFP_CMA |
 				__GFP_MOVABLE);
 	if (!entry) {
-		zcomp_stream_put(zram->comps[ZRAM_PRIMARY_COMP]);
+		if (zc)
+			zcomp_stream_put(zc);
 		atomic64_inc(&zram->stats.writestall);
 		entry = zram_entry_alloc(zram, comp_len,
 				GFP_NOIO | __GFP_HIGHMEM |
@@ -1681,7 +1734,8 @@ compress_again:
 	update_used_max(zram, alloced_pages);
 
 	if (zram->limit_pages && alloced_pages > zram->limit_pages) {
-		zcomp_stream_put(zram->comps[ZRAM_PRIMARY_COMP]);
+		if (zc)
+			zcomp_stream_put(zc);
 		zram_entry_free(zram, entry);
 		return -ENOMEM;
 	}
@@ -1696,7 +1750,8 @@ compress_again:
 	if (comp_len == PAGE_SIZE)
 		kunmap_atomic(src);
 
-	zcomp_stream_put(zram->comps[ZRAM_PRIMARY_COMP]);
+	if (zc)
+		zcomp_stream_put(zc);
 	zs_unmap_object(zram->mem_pool, zram_entry_handle(zram, entry));
 	atomic64_add(comp_len, &zram->stats.compr_data_size);
 	zram_dedup_insert(zram, entry, checksum);
@@ -1719,6 +1774,7 @@ out:
 	}  else {
 		zram_set_entry(zram, index, entry);
 		zram_set_obj_size(zram, index, comp_len);
+		zram_set_priority(zram, index, wprio);
 	}
 	zram_slot_unlock(zram, index);
 
@@ -2773,6 +2829,11 @@ static int __init zram_init(void)
 				      zcomp_cpu_up_prepare, zcomp_cpu_dead);
 	if (ret < 0)
 		return ret;
+
+#ifdef CONFIG_ZRAM_MULTI_COMP
+	/* best effort: /proc/sys/vm/zram_recomp_immediate (zram is built in) */
+	register_sysctl("vm", zram_sysctl_table);
+#endif
 
 	ret = class_register(&zram_control_class);
 	if (ret) {
