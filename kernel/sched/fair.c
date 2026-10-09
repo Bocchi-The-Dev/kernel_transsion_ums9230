@@ -8012,7 +8012,8 @@ static const unsigned int sched_nr_migrate_break = 32;
 static int detach_tasks(struct lb_env *env)
 {
 	struct list_head *tasks = &env->src_rq->cfs_tasks;
-	struct task_struct *p;
+	struct list_head *resume = NULL;
+	struct task_struct *p, *nextp;
 	unsigned long load;
 	int detached = 0;
 
@@ -8025,27 +8026,45 @@ static int detach_tasks(struct lb_env *env)
 	if (unlikely(env->src_rq->active_balance))
 		return 0;
 
-	while (!list_empty(tasks)) {
+	/*
+	 * Walk cfs_tasks from the tail towards the head (Cambyses
+	 * LB_ROTATE_BLOCK, after firelzrd).
+	 *
+	 * @nextp is latched before the body runs because a successful
+	 * detach_task() takes @p off this list; only @p is ever removed here
+	 * and the rq lock is held, so @nextp stays valid.  @resume is the first
+	 * task this pass has not examined: where a later pass should restart.
+	 */
+	for (p = list_last_entry(tasks, struct task_struct, se.group_node);
+	     &p->se.group_node != tasks; p = nextp) {
+		nextp = list_prev_entry(p, se.group_node);
+
 		/*
 		 * We don't want to steal all, otherwise we may be treated likewise,
 		 * which could at worst lead to a livelock crash.
 		 */
-		if (env->idle != CPU_NOT_IDLE && env->src_rq->nr_running <= 1)
+		if (env->idle != CPU_NOT_IDLE && env->src_rq->nr_running <= 1) {
+			resume = &p->se.group_node;
 			break;
-
-		p = list_last_entry(tasks, struct task_struct, se.group_node);
+		}
 
 		env->loop++;
 		/* We've more or less seen every task there is, call it quits */
-		if (env->loop > env->loop_max)
+		if (env->loop > env->loop_max) {
+			resume = &p->se.group_node;
 			break;
+		}
 
 		/* take a breather every nr_migrate tasks */
 		if (env->loop > env->loop_break) {
 			env->loop_break += sched_nr_migrate_break;
 			env->flags |= LBF_NEED_BREAK;
+			resume = &p->se.group_node;
 			break;
 		}
+
+		/* from here on @p counts as examined, whatever the outcome */
+		resume = &nextp->se.group_node;
 
 		if (!can_migrate_task(p, env))
 			goto next;
@@ -8094,8 +8113,22 @@ next:
 		trace_sched_load_balance_skip_tasks(env->src_cpu, env->dst_cpu,
 				env->src_grp_type, p->pid, load, task_util_est(p),
 				cpumask_bits(&p->cpus_mask)[0]);
-		list_move(&p->se.group_node, tasks);
+		if (!sched_feat(LB_ROTATE_BLOCK))
+			list_move(&p->se.group_node, tasks);
 	}
+
+	/*
+	 * Advance the scan window as a block: making @resume the new tail is
+	 * the same as making its successor the new head.  The surviving
+	 * rejects move to the head together, keeping their relative order, at
+	 * the cost of one list operation per scan instead of one per reject.
+	 * No rotation is needed if the walk reached the head (@resume is the
+	 * list itself) or @resume is already the tail (everything examined was
+	 * detached).
+	 */
+	if (sched_feat(LB_ROTATE_BLOCK) && resume &&
+	    resume != tasks && resume->next != tasks)
+		list_rotate_to_front(resume->next, tasks);
 
 	/*
 	 * Right now, this is one of only two places we collect this stat

@@ -79,6 +79,15 @@ SCHED_FEAT(RT_PUSH_IPI, true)
 
 SCHED_FEAT(RT_RUNTIME_SHARE, false)
 SCHED_FEAT(LB_MIN, false)
+
+/*
+ * Advance detach_tasks()' scan window by rotating the examined block to the
+ * head of cfs_tasks once per scan, instead of list_move()ing every rejected
+ * task there under the rq lock.  Same coverage (a later pass resumes where
+ * this one stopped), fewer list operations.  Cambyses by firelzrd.
+ * Turn off (via /sys/kernel/debug/sched_features) for the old behaviour.
+ */
+SCHED_FEAT(LB_ROTATE_BLOCK, true)
 SCHED_FEAT(ATTACH_AGE_LOAD, true)
 
 SCHED_FEAT(WA_IDLE, true)
