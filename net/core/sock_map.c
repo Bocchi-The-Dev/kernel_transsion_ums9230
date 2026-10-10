@@ -10,6 +10,7 @@
 #include <linux/skmsg.h>
 #include <linux/list.h>
 #include <linux/jhash.h>
+#include <net/udp.h>
 
 struct bpf_stab {
 	struct bpf_map map;
@@ -152,6 +153,7 @@ static void sock_map_del_link(struct sock *sk,
 				strp_stop = true;
 			list_del(&link->list);
 			sk_psock_free_link(link);
+			break;
 		}
 	}
 	spin_unlock_bh(&psock->link_lock);
@@ -228,10 +230,21 @@ static int sock_map_link(struct bpf_map *map, struct sk_psock_progs *progs,
 	if (msg_parser)
 		psock_set_prog(&psock->progs.msg_parser, msg_parser);
 	if (sk_psock_is_new) {
-		ret = tcp_bpf_init(sk);
+		if (sk->sk_type == SOCK_DGRAM) {
+			struct proto *prot = udp_bpf_get_proto(sk, psock);
+
+			if (IS_ERR(prot)) {
+				ret = PTR_ERR(prot);
+				goto out_drop;
+			}
+			sk_psock_update_proto(sk, psock, prot);
+			ret = 0;
+		} else {
+			ret = tcp_bpf_init(sk);
+		}
 		if (ret < 0)
 			goto out_drop;
-	} else {
+	} else if (sk->sk_type != SOCK_DGRAM) {
 		tcp_bpf_reinit(sk);
 	}
 
@@ -320,6 +333,9 @@ static int __sock_map_delete(struct bpf_stab *stab, struct sock *sk_test,
 {
 	struct sock *sk;
 	int err = 0;
+
+	if (irqs_disabled())
+		return -EOPNOTSUPP; /* locks here are hardirq-unsafe */
 
 	raw_spin_lock_bh(&stab->lock);
 	sk = *psk;
@@ -654,6 +670,9 @@ static int sock_hash_delete_elem(struct bpf_map *map, void *key)
 	struct bpf_htab_elem *elem;
 	int ret = -ENOENT;
 
+	if (irqs_disabled())
+		return -EOPNOTSUPP; /* locks here are hardirq-unsafe */
+
 	hash = sock_hash_bucket_hash(key, key_size);
 	bucket = sock_hash_select_bucket(htab, hash);
 
@@ -793,6 +812,16 @@ static int sock_hash_update_elem(struct bpf_map *map, void *key,
 out:
 	fput(sock->file);
 	return ret;
+}
+
+int sock_map_update_elem_sys(struct bpf_map *map, void *key, void *value,
+			     u64 flags)
+{
+	if (map->map_type == BPF_MAP_TYPE_SOCKMAP)
+		return sock_map_update_elem(map, key, value, flags);
+	if (map->map_type == BPF_MAP_TYPE_SOCKHASH)
+		return sock_hash_update_elem(map, key, value, flags);
+	return -EOPNOTSUPP;
 }
 
 static int sock_hash_get_next_key(struct bpf_map *map, void *key,
@@ -939,6 +968,7 @@ static void sock_hash_free(struct bpf_map *map)
 			sock_put(elem->sk);
 			sock_hash_free_elem(htab, elem);
 		}
+		cond_resched();
 	}
 
 	/* wait for psock readers accessing its map link */
@@ -1091,4 +1121,55 @@ void sk_psock_unlink(struct sock *sk, struct sk_psock_link *link)
 	default:
 		break;
 	}
+}
+
+static void sock_map_remove_links(struct sock *sk, struct sk_psock *psock)
+{
+	struct sk_psock_link *link;
+
+	while ((link = sk_psock_link_pop(psock))) {
+		sk_psock_unlink(sk, link);
+		sk_psock_free_link(link);
+	}
+}
+
+void sock_map_unhash(struct sock *sk)
+{
+	void (*saved_unhash)(struct sock *sk);
+	struct sk_psock *psock;
+
+	rcu_read_lock();
+	psock = sk_psock(sk);
+	if (unlikely(!psock)) {
+		rcu_read_unlock();
+		if (sk->sk_prot->unhash)
+			sk->sk_prot->unhash(sk);
+		return;
+	}
+
+	saved_unhash = psock->saved_unhash;
+	sock_map_remove_links(sk, psock);
+	rcu_read_unlock();
+	saved_unhash(sk);
+}
+
+void sock_map_close(struct sock *sk, long timeout)
+{
+	void (*saved_close)(struct sock *sk, long timeout);
+	struct sk_psock *psock;
+
+	lock_sock(sk);
+	rcu_read_lock();
+	psock = sk_psock(sk);
+	if (unlikely(!psock)) {
+		rcu_read_unlock();
+		release_sock(sk);
+		return sk->sk_prot->close(sk, timeout);
+	}
+
+	saved_close = psock->saved_close;
+	sock_map_remove_links(sk, psock);
+	rcu_read_unlock();
+	release_sock(sk);
+	saved_close(sk, timeout);
 }

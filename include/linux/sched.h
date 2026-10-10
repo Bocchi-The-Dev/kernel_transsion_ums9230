@@ -644,6 +644,8 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
+struct bpf_local_storage;
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -1308,6 +1310,10 @@ struct task_struct {
 #ifdef CONFIG_SECURITY
 	/* Used by LSM modules for access restriction: */
 	void				*security;
+#endif
+#ifdef CONFIG_BPF_SYSCALL
+	/* Used by BPF task local storage */
+	struct bpf_local_storage __rcu	*bpf_storage;
 #endif
 
 #ifdef CONFIG_GCC_PLUGIN_STACKLEAK

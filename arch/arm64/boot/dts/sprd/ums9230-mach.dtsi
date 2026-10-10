@@ -117,7 +117,16 @@
 			compatible = "ramoops";
 			reg = <0x0 0xfff80000 0x0 0x00040000>;
 			record-size = <0x8000>;
-			console-size = <0x8000>;
+			/*
+			 * 160K, up from the vendor's 32K. The 32K ring wrapped
+			 * before the sysdump was taken: in the Android 17 GSI
+			 * panic of 2026-09-10 the shutdown began at 14.0s while
+			 * the retained log only started at 15.8s, so the event
+			 * that triggered it was overwritten and unrecoverable.
+			 * record+pmsg stay at 32K; 0x8000+0x28000+0x8000 =
+			 * 0x38000, within the 0x40000 reservation.
+			 */
+			console-size = <0x28000>;
 			pmsg-size = <0x8000>;
 		};
 	};

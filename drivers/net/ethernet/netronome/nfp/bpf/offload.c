@@ -46,9 +46,7 @@ nfp_map_ptr_record(struct nfp_app_bpf *bpf, struct nfp_prog *nfp_prog,
 	/* Grab a single ref to the map for our record.  The prog destroy ndo
 	 * happens after free_used_maps().
 	 */
-	map = bpf_map_inc(map, false);
-	if (IS_ERR(map))
-		return PTR_ERR(map);
+	bpf_map_inc(map);
 
 	record = kmalloc(sizeof(*record), GFP_KERNEL);
 	if (!record) {
@@ -454,7 +452,8 @@ int nfp_bpf_event_output(struct nfp_app_bpf *bpf, const void *data,
 	map_id_full = be64_to_cpu(cbe->map_ptr);
 	map_id = map_id_full;
 
-	if (len < sizeof(struct cmsg_bpf_event) + pkt_size + data_size)
+	if (size_add(pkt_size, data_size) > INT_MAX ||
+	    len < sizeof(struct cmsg_bpf_event) + pkt_size + data_size)
 		return -EINVAL;
 	if (cbe->hdr.ver != NFP_CCM_ABI_VERSION)
 		return -EINVAL;

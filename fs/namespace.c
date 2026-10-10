@@ -30,9 +30,20 @@
 #include <uapi/linux/mount.h>
 #include <linux/fs_context.h>
 #include <linux/shmem_fs.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 #include "pnode.h"
 #include "internal.h"
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+extern bool susfs_is_current_ksu_domain(void);
+extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
+
+#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */
+
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 /* Maximum number of mounts in a mount namespace */
 unsigned int sysctl_mount_max __read_mostly = 100000;
@@ -61,6 +72,15 @@ static int __init set_mphash_entries(char *str)
 	return 1;
 }
 __setup("mphash_entries=", set_mphash_entries);
+
+static char * __initdata initramfs_options;
+static int __init initramfs_options_setup(char *str)
+{
+	initramfs_options = str;
+	return 1;
+}
+
+__setup("initramfs_options=", initramfs_options_setup);
 
 static u64 event;
 static DEFINE_IDA(mnt_id_ida);
@@ -114,6 +134,11 @@ static int mnt_alloc_id(struct mount *mnt)
 
 static void mnt_free_id(struct mount *mnt)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (unlikely(mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+		return;
+
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	ida_free(&mnt_id_ida, mnt->mnt_id);
 }
 
@@ -122,7 +147,25 @@ static void mnt_free_id(struct mount *mnt)
  */
 static int mnt_alloc_group_id(struct mount *mnt)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	int res;
+
+	/* - mnt_alloc_group_id will unlikely get called after screen is unlocked on reboot,
+	 *   so here we can persistently check if current is ksu domain, and assign a sus
+	 *   mnt_group_id if so.
+	 * - Also we can re-use the original mnt_group_ida so there is no need to use
+	 *   another ida nor hook the mnt_release_group_id() function.
+	 */
+	if (susfs_is_current_ksu_domain()) {
+		res = ida_alloc_min(&mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL);
+		goto bypass_orig_flow;
+	}
+
+	res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
+bypass_orig_flow:
+#else
 	int res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 	if (res < 0)
 		return res;
@@ -171,6 +214,117 @@ int mnt_get_count(struct mount *mnt)
 	return mnt->mnt_count;
 #endif
 }
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+/* A copy of alloc_vfsmnt() but allocates the fake mnt_id for mounts
+ * that are unshared by ksu process
+ */
+static struct mount *susfs_alloc_unshare_ksu_vfsmnt(const char *name, int old_mnt_id)
+{
+	struct mount *mnt = kmem_cache_zalloc(mnt_cache, GFP_KERNEL);
+
+	if (mnt) {
+		mnt->mnt_id = old_mnt_id;
+
+		if (name) {
+			mnt->mnt_devname = kstrdup_const(name,
+							 GFP_KERNEL);
+			if (!mnt->mnt_devname)
+				goto out_free_cache;
+		}
+
+#ifdef CONFIG_SMP
+		mnt->mnt_pcp = alloc_percpu(struct mnt_pcp);
+		if (!mnt->mnt_pcp)
+			goto out_free_devname;
+
+		this_cpu_add(mnt->mnt_pcp->mnt_count, 1);
+#else
+		mnt->mnt_count = 1;
+		mnt->mnt_writers = 0;
+#endif
+
+		INIT_HLIST_NODE(&mnt->mnt_hash);
+		INIT_LIST_HEAD(&mnt->mnt_child);
+		INIT_LIST_HEAD(&mnt->mnt_mounts);
+		INIT_LIST_HEAD(&mnt->mnt_list);
+		INIT_LIST_HEAD(&mnt->mnt_expire);
+		INIT_LIST_HEAD(&mnt->mnt_share);
+		INIT_LIST_HEAD(&mnt->mnt_slave_list);
+		INIT_LIST_HEAD(&mnt->mnt_slave);
+		INIT_HLIST_NODE(&mnt->mnt_mp_list);
+		INIT_LIST_HEAD(&mnt->mnt_umounting);
+		INIT_HLIST_HEAD(&mnt->mnt_stuck_children);
+	}
+	return mnt;
+
+#ifdef CONFIG_SMP
+out_free_devname:
+	kfree_const(mnt->mnt_devname);
+#endif
+out_free_cache:
+	kmem_cache_free(mnt_cache, mnt);
+	return NULL;
+}
+
+/* A copy of alloc_vfsmnt() but allocates the fake mnt_id for mount
+ * that is mounted or single cloned by ksu process
+ */
+static struct mount *susfs_alloc_non_unshare_ksu_vfsmnt(const char *name)
+{
+	struct mount *mnt = kmem_cache_zalloc(mnt_cache, GFP_KERNEL);
+	int res;
+
+	if (mnt) {
+		res = ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL);
+		if (res < 0)
+			goto out_free_cache;
+
+		mnt->mnt_id = res;
+
+		if (name) {
+			mnt->mnt_devname = kstrdup_const(name,
+							 GFP_KERNEL);
+			if (!mnt->mnt_devname)
+				goto out_free_id;
+		}
+
+#ifdef CONFIG_SMP
+		mnt->mnt_pcp = alloc_percpu(struct mnt_pcp);
+		if (!mnt->mnt_pcp)
+			goto out_free_devname;
+
+		this_cpu_add(mnt->mnt_pcp->mnt_count, 1);
+#else
+		mnt->mnt_count = 1;
+		mnt->mnt_writers = 0;
+#endif
+
+		INIT_HLIST_NODE(&mnt->mnt_hash);
+		INIT_LIST_HEAD(&mnt->mnt_child);
+		INIT_LIST_HEAD(&mnt->mnt_mounts);
+		INIT_LIST_HEAD(&mnt->mnt_list);
+		INIT_LIST_HEAD(&mnt->mnt_expire);
+		INIT_LIST_HEAD(&mnt->mnt_share);
+		INIT_LIST_HEAD(&mnt->mnt_slave_list);
+		INIT_LIST_HEAD(&mnt->mnt_slave);
+		INIT_HLIST_NODE(&mnt->mnt_mp_list);
+		INIT_LIST_HEAD(&mnt->mnt_umounting);
+		INIT_HLIST_HEAD(&mnt->mnt_stuck_children);
+	}
+	return mnt;
+
+#ifdef CONFIG_SMP
+out_free_devname:
+	kfree_const(mnt->mnt_devname);
+#endif
+out_free_id:
+	mnt_free_id(mnt);
+out_free_cache:
+	kmem_cache_free(mnt_cache, mnt);
+	return NULL;
+}
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 static struct mount *alloc_vfsmnt(const char *name)
 {
@@ -569,15 +723,11 @@ int __legitimize_mnt(struct vfsmount *bastard, unsigned seq)
 		return 0;
 	mnt = real_mount(bastard);
 	mnt_add_count(mnt, 1);
-	smp_mb();			// see mntput_no_expire()
+	smp_mb();		// see mntput_no_expire() and do_umount()
 	if (likely(!read_seqretry(&mount_lock, seq)))
 		return 0;
-	if (bastard->mnt_flags & MNT_SYNC_UMOUNT) {
-		mnt_add_count(mnt, -1);
-		return 1;
-	}
 	lock_mount_hash();
-	if (unlikely(bastard->mnt_flags & MNT_DOOMED)) {
+	if (unlikely(bastard->mnt_flags & (MNT_SYNC_UMOUNT | MNT_DOOMED))) {
 		mnt_add_count(mnt, -1);
 		unlock_mount_hash();
 		return 1;
@@ -609,6 +759,20 @@ struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
 {
 	struct hlist_head *head = m_hash(mnt, dentry);
 	struct mount *p;
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	// - The hook here is needed as a temp solution to hide sus mnts for zygote_next
+	//   spawned process since it just inherits the init mount namespace, and here
+	//   we also spoof for the zygote spawned processes that are marked umounted,
+	//   with this hack, we do not even need to umount those sus mounts.
+	// - The solution here is simply to return the legit mount.
+	if (susfs_is_current_proc_umounted()) {
+		hlist_for_each_entry_rcu(p, head, mnt_hash)
+			if (p->mnt_id < DEFAULT_KSU_MNT_ID && &p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
+				return p;
+		return NULL;
+	}
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 	hlist_for_each_entry_rcu(p, head, mnt_hash)
 		if (&p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
@@ -937,7 +1101,21 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc)
 	if (!fc->root)
 		return ERR_PTR(-EINVAL);
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	// - We will just stop checking for ksu process if /sdcard/Android is accessible,
+	//   for the sake of performance
+	if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
+		if (susfs_is_current_ksu_domain()) {
+			mnt = susfs_alloc_non_unshare_ksu_vfsmnt(fc->source ?: "none");
+			goto bypass_orig_flow;
+		}
+	}
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+
 	mnt = alloc_vfsmnt(fc->source ?: "none");
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+bypass_orig_flow:
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
 
@@ -1019,8 +1197,42 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 	struct super_block *sb = old->mnt.mnt_sb;
 	struct mount *mnt;
 	int err;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	bool is_mnt_ksu_unshared = false;
+
+	// - We will just stop checking for ksu process if /sdcard/Android is accessible,
+	//   for the sake of performance
+	if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
+		// - If /sdcard/Android is still not accessible, we keep checking for mounts
+		//   mounted by ksu process
+		if (susfs_is_current_ksu_domain()) {
+			// - If it is unsharing, we re-use the old->mnt_id assign it for mnt->mnt_id directly
+			//   without going thru ida, but we need to set a bit VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT
+			//   on mnt->mnt.mnt_flags below, otherwise we find no other ways to identify if this
+			//   mnt->mnt_id is assigned without ida when it is being freed in mnt_free_id().
+			if (flag & CL_COPY_MNT_NS) {
+				mnt = susfs_alloc_unshare_ksu_vfsmnt(old->mnt_devname, old->mnt_id);
+				is_mnt_ksu_unshared = true;
+				goto bypass_orig_flow;
+			}
+			// else we just go assign fake mnt_id starting with DEFAULT_KSU_MNT_ID
+			mnt = susfs_alloc_non_unshare_ksu_vfsmnt(old->mnt_devname);
+			goto bypass_orig_flow;
+		}
+	}
+
+	// - We keep checking all processes and if old->mnt_id >= DEFAULT_KSU_MNT_ID,
+	//   go assign fake mnt_id starting with DEFAULT_KSU_MNT_ID
+	if (old->mnt_id >= DEFAULT_KSU_MNT_ID) {
+		mnt = susfs_alloc_non_unshare_ksu_vfsmnt(old->mnt_devname);
+		goto bypass_orig_flow;
+	}
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 	mnt = alloc_vfsmnt(old->mnt_devname);
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+bypass_orig_flow:
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
 
@@ -1037,6 +1249,11 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 
 	mnt->mnt.mnt_flags = old->mnt.mnt_flags;
 	mnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (unlikely(is_mnt_ksu_unshared))
+		mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 	atomic_inc(&sb->s_active);
 	mnt->mnt.mnt_sb = sb;
@@ -1588,6 +1805,7 @@ static int do_umount(struct mount *mnt, int flags)
 			umount_tree(mnt, UMOUNT_PROPAGATE);
 		retval = 0;
 	} else {
+		smp_mb(); // paired with __legitimize_mnt()
 		shrink_submounts(mnt);
 		retval = -EBUSY;
 		if (!propagate_mount_busy(mnt, 2)) {
@@ -2127,14 +2345,14 @@ static int attach_recursive_mnt(struct mount *source_mnt,
 	hlist_for_each_entry_safe(child, n, &tree_list, mnt_hash) {
 		struct mount *q;
 		hlist_del_init(&child->mnt_hash);
-		q = __lookup_mnt(&child->mnt_parent->mnt,
-				 child->mnt_mountpoint);
-		if (q)
-			mnt_change_mountpoint(child, smp, q);
 		/* Notice when we are propagating across user namespaces */
 		if (child->mnt_parent->mnt_ns->user_ns != user_ns)
 			lock_mnt_tree(child);
 		child->mnt.mnt_flags &= ~MNT_LOCKED;
+		q = __lookup_mnt(&child->mnt_parent->mnt,
+				 child->mnt_mountpoint);
+		if (q)
+			mnt_change_mountpoint(child, smp, q);
 		commit_tree(child);
 	}
 	put_mountpoint(smp);
@@ -2213,6 +2431,19 @@ static int graft_tree(struct mount *mnt, struct mount *p, struct mountpoint *mp)
 	return attach_recursive_mnt(mnt, p, mp, false);
 }
 
+static int may_change_propagation(const struct mount *m)
+{
+        struct mnt_namespace *ns = m->mnt_ns;
+
+	 // it must be mounted in some namespace
+	 if (IS_ERR_OR_NULL(ns))         // is_mounted()
+		 return -EINVAL;
+	 // and the caller must be admin in userns of that namespace
+	 if (!ns_capable(ns->user_ns, CAP_SYS_ADMIN))
+		 return -EPERM;
+	 return 0;
+}
+
 /*
  * Sanity check the flags to change_mnt_propagation.
  */
@@ -2249,6 +2480,10 @@ static int do_change_type(struct path *path, int ms_flags)
 		return -EINVAL;
 
 	namespace_lock();
+	err = may_change_propagation(mnt);
+	if (err)
+		goto out_unlock;
+
 	if (type == MS_SHARED) {
 		err = invent_group_ids(mnt, recurse);
 		if (err)
@@ -2492,19 +2727,26 @@ static void mnt_warn_timestamp_expiry(struct path *mountpoint, struct vfsmount *
 	struct super_block *sb = mnt->mnt_sb;
 
 	if (!__mnt_is_readonly(mnt) &&
+	   (!(sb->s_iflags & SB_I_TS_EXPIRY_WARNED)) &&
 	   (ktime_get_real_seconds() + TIME_UPTIME_SEC_MAX > sb->s_time_max)) {
-		char *buf = (char *)__get_free_page(GFP_KERNEL);
-		char *mntpath = buf ? d_path(mountpoint, buf, PAGE_SIZE) : ERR_PTR(-ENOMEM);
-		struct tm tm;
+		char *buf, *mntpath;
 
-		time64_to_tm(sb->s_time_max, 0, &tm);
+		buf = (char *)__get_free_page(GFP_KERNEL);
+		if (buf)
+			mntpath = d_path(mountpoint, buf, PAGE_SIZE);
+		else
+			mntpath = ERR_PTR(-ENOMEM);
+		if (IS_ERR(mntpath))
+			mntpath = "(unknown)";
 
-		pr_warn("%s filesystem being %s at %s supports timestamps until %04ld (0x%llx)\n",
+		pr_warn("%s filesystem being %s at %s supports timestamps until %ptTd (0x%llx)\n",
 			sb->s_type->name,
 			is_mounted(mnt) ? "remounted" : "mounted",
-			mntpath,
-			tm.tm_year+1900, (unsigned long long)sb->s_time_max);
+			mntpath, &sb->s_time_max,
+			(unsigned long long)sb->s_time_max);
 
+		sb->s_iflags |= SB_I_TS_EXPIRY_WARNED;
+		if (buf)
 		free_page((unsigned long)buf);
 	}
 }
@@ -2614,6 +2856,71 @@ static bool check_for_nsfs_mounts(struct mount *subtree)
 out:
 	unlock_mount_hash();
 	return ret;
+}
+
+static int do_set_group(struct path *from_path, struct path *to_path)
+{
+	struct mount *from, *to;
+	int err;
+
+	from = real_mount(from_path->mnt);
+	to = real_mount(to_path->mnt);
+
+	namespace_lock();
+
+	err = may_change_propagation(from);
+	if (err)
+		goto out;
+	err = may_change_propagation(to);
+	if (err)
+		goto out;
+
+	err = -EINVAL;
+	/* To and From paths should be mount roots */
+	if (from_path->dentry != from_path->mnt->mnt_root)
+		goto out;
+	if (to_path->dentry != to_path->mnt->mnt_root)
+		goto out;
+
+	/* Setting sharing groups is only allowed across same superblock */
+	if (from->mnt.mnt_sb != to->mnt.mnt_sb)
+		goto out;
+
+	/* From mount root should be wider than To mount root */
+	if (!is_subdir(to->mnt.mnt_root, from->mnt.mnt_root))
+		goto out;
+
+	/* From mount should not have locked children in place of To's root */
+	if (has_locked_children(from, to->mnt.mnt_root))
+		goto out;
+
+	/* Setting sharing groups is only allowed on private mounts */
+	if (IS_MNT_SHARED(to) || IS_MNT_SLAVE(to))
+		goto out;
+
+	/* From should not be private */
+	if (!IS_MNT_SHARED(from) && !IS_MNT_SLAVE(from))
+		goto out;
+
+	if (IS_MNT_SLAVE(from)) {
+		struct mount *m = from->mnt_master;
+
+		list_add(&to->mnt_slave, &m->mnt_slave_list);
+		to->mnt_master = m;
+	}
+
+	if (IS_MNT_SHARED(from)) {
+		to->mnt_group_id = from->mnt_group_id;
+		list_add(&to->mnt_share, &from->mnt_share);
+		lock_mount_hash();
+		set_mnt_shared(to);
+		unlock_mount_hash();
+	}
+
+	err = 0;
+out:
+	namespace_unlock();
+	return err;
 }
 
 static int do_move_mount(struct path *old_path, struct path *new_path)
@@ -3258,6 +3565,9 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 	copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;
 	if (user_ns != ns->user_ns)
 		copy_flags |= CL_SHARED_TO_SLAVE;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	copy_flags |= CL_COPY_MNT_NS;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	new = copy_tree(old, old->mnt.mnt_root, copy_flags);
 	if (IS_ERR(new)) {
 		namespace_unlock();
@@ -3575,6 +3885,9 @@ SYSCALL_DEFINE5(move_mount,
 	if (ret < 0)
 		goto out_to;
 
+	if (flags & MOVE_MOUNT_SET_GROUP)
+		ret = do_set_group(&from_path, &to_path);
+	else
 	ret = do_move_mount(&from_path, &to_path);
 
 out_to:
@@ -3740,7 +4053,7 @@ static void __init init_mount_tree(void)
 	struct mnt_namespace *ns;
 	struct path root;
 
-	mnt = vfs_kern_mount(&rootfs_fs_type, 0, "rootfs", NULL);
+	mnt = vfs_kern_mount(&rootfs_fs_type, 0, "rootfs", initramfs_options);
 	if (IS_ERR(mnt))
 		panic("Can't create rootfs");
 
@@ -4037,3 +4350,43 @@ const struct proc_ns_operations mntns_operations = {
 	.install	= mntns_install,
 	.owner		= mntns_owner,
 };
+
+#ifdef CONFIG_KSU_SUSFS
+/* - To retrieve the non sus mnt_id from mount */
+int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt) {
+	struct mount *mnt = orig_mnt;
+	int mnt_id;
+
+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+		return mnt->mnt_id;
+
+	lock_mount_hash();
+	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+	mnt_id = mnt->mnt_id;
+	unlock_mount_hash();
+	return mnt_id;
+}
+
+/* - To retrieve the non sus vfsmount from vfsmount, takes a reference on &mnt->mnt and mnt->mnt.mnt_root */
+struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt) {
+	struct mount *mnt = real_mount(vfsmnt);
+
+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID) {
+		mntget(&mnt->mnt);
+		dget(mnt->mnt.mnt_root);
+		return &mnt->mnt;
+	}
+
+	lock_mount_hash();
+	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+	mntget(&mnt->mnt);
+	if (!mnt->mnt.mnt_root || IS_ERR(mnt->mnt.mnt_root)) {
+		mntput(&mnt->mnt);
+		unlock_mount_hash();
+		return vfsmnt;
+	}
+	dget(mnt->mnt.mnt_root);
+	unlock_mount_hash();
+	return &mnt->mnt;
+}
+#endif // #ifdef CONFIG_KSU_SUSFS

@@ -30,32 +30,10 @@ name: BUILD-DEBUG
 # resolution. Nothing here changes runtime behaviour on a healthy boot
 # except that a hung task will now reboot the phone instead of hanging it.
 
-# MANUAL TRIGGER ONLY. Deliberately no `push:`/`pull_request:` trigger.
-# main.yml already builds every push to susfs-testing; this workflow exists
-# to produce one image at a time, on request, when there is a specific
-# failure to go and look at. A diagnostic kernel that rebuilds itself on
-# every push is just a slower, noisier main.yml that nobody asked for.
-#
-#   gh workflow run BUILD-DEBUG.yaml --repo Bocchi-The-Dev/kernel_transsion_ums9230 \
-#       -f branch=susfs-testing
-#
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to build the diagnostic kernel from'
-        required: false
-        default: 'susfs-testing'
-        type: string
-  # The old trigger was `push: branches: [ debug ]`, but no `debug` branch
-  # has ever existed, so it never fired. Dispatching by hand instead built
-  # the DEFAULT BRANCH (master), because the checkout step passed no `ref` --
-  # which meant this workflow spent its life building code nobody was about
-  # to flash. That is how it came to fail on the last_switch_count error
-  # that susfs-testing had already fixed: it was two commits stale and
-  # reporting a problem with a commit it was not even running.
-  # A diagnostic kernel is only worth building from the tree you intend to
-  # flash, so the ref is now an explicit input rather than an accident.
+  push:
+    branches: [ debug ]
 
 jobs:
   build-debug:
@@ -78,25 +56,22 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true
-          # Without this the checkout silently uses the default branch,
-          # which is not the tree being tested. See the note on `on:` above.
-          ref: ${{ inputs.branch || 'susfs-testing' }}
 
-      - name: Show what is actually being built
+      - name: Expand KernelSU submodule history and tags
         run: |
-          set -euo pipefail
-          BRANCH="${{ inputs.branch || 'susfs-testing' }}"
-          echo "requested branch: $BRANCH"
-          echo "checked-out:       $(git rev-parse --short HEAD)"
-          echo "subject:           $(git log -1 --format=%s)"
-          # A typo'd branch must fail here, loudly, rather than 15 minutes
-          # later inside make.
-          if ! git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
-            echo "::error::no such remote branch: $BRANCH"
-            echo "available:"
-            git branch -r | sed 's/^/  /'
-            exit 1
-          fi
+          git -C KernelSU fetch --unshallow --tags
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # Same set, and for the same reasons, as main.yml: dwarves supplies
+          # pahole, without which the vmlinux link dies at
+          # "Failed to generate BTF for vmlinux" now that
+          # CONFIG_DEBUG_INFO_BTF=y; libc6-dev-arm64-cross supplies the glibc
+          # multilib headers that usr/include/Makefile needs for the UAPI
+          # header self-test. Keep the two lists in step.
+          sudo apt-get install -y flex bison bc cpio libssl-dev xz-utils dwarves \
+            libc6-dev-arm64-cross
 
       - name: Fetch the reference toolchain (clang-r416183b)
         run: |
@@ -251,104 +226,19 @@ jobs:
           grep -qx "CONFIG_LOG_BUF_SHIFT=21"   "$CONFIG" || { echo "::error::LOG_BUF_SHIFT did not stick"; exit 1; }
           echo "all TIER 0 options verified in $CONFIG"
 
-      # Landlock is the thing under test on this image, so it is enabled
-      # here and NOT in bg6_defconfig. Keeping it out of the defconfig
-      # means the everyday main.yml build is unaffected, and this step is
-      # the single place that turns it on.
-      #
-      # It has to be two changes, not one. CONFIG_SECURITY_LANDLOCK=y
-      # compiles security/landlock/*.c, but an LSM not named in
-      # CONFIG_LSM is never initialised -- it would sit in the image,
-      # inert, while every check around it reported success. So both the
-      # symbol and the ordering entry are set, and both are asserted.
-      - name: Enable Landlock (the feature under test)
-        run: |
-          set -euo pipefail
-          O_DIR="$(sed -n 's/.*O=\([^ ]*\).*/\1/p' <<< "$MAKE_ARGS")"
-          CONFIG="$O_DIR/.config"
-          S="./scripts/config --file $CONFIG"
-
-          $S --enable SECURITY_LANDLOCK
-
-          # prepend, never append, and only if not already present
-          LSM=$(sed -n 's/^CONFIG_LSM="\(.*\)"$/\1/p' "$CONFIG")
-          case ",$LSM," in
-            *,landlock,*) : ;;
-            *) LSM="landlock,$LSM" ;;
-          esac
-          $S --set-str LSM "$LSM"
-
-          make $MAKE_ARGS olddefconfig >/dev/null
-
-          for sym in CONFIG_SECURITY_LANDLOCK CONFIG_SECURITY_PATH; do
-            grep -qx "$sym=y" "$CONFIG" || { echo "::error::$sym did not stick"; exit 1; }
-          done
-          # assert on the FINAL value: read it back and check its head,
-          # rather than rebuilding the expected string from a value this
-          # step has already modified
-          FINAL=$(sed -n 's/^CONFIG_LSM="\(.*\)"$/\1/p' "$CONFIG")
-          case "$FINAL" in
-            landlock,*) : ;;
-            *) echo "::error::landlock is not first in CONFIG_LSM"; exit 1 ;;
-          esac
-          [ "$(printf '%s' "$FINAL" | tr ',' '\n' | grep -cx landlock)" -eq 1 ] || \
-            { echo "::error::landlock appears more than once in CONFIG_LSM"; exit 1; }
-          echo "landlock enabled"
-
       - name: Build Image
         run: make $MAKE_ARGS -j$(nproc) Image
-
-      # The failure this exists to catch: Landlock sat in the tree as 19
-      # files and 2466 lines that no build had ever touched, because
-      # CONFIG_SECURITY_LANDLOCK defaults to n -- so "make Image: 0
-      # errors" was true and meaningless at the same time, and I reported
-      # it as verification. A green build says nothing about code that
-      # was not compiled. Assert on the artefacts, not the exit status.
-      - name: Verify Landlock was actually compiled in
-        run: |
-          set -euo pipefail
-          missing=0
-          for o in cred object ruleset fs ptrace setup syscalls; do
-            if [ -f "out/security/landlock/$o.o" ]; then
-              echo "  ok     security/landlock/$o.o"
-            else
-              echo "::error::security/landlock/$o.o was NOT built"
-              missing=1
-            fi
-          done
-          [ "$missing" -eq 0 ] || exit 1
-          grep -qx "CONFIG_SECURITY_LANDLOCK=y" out/.config || {
-            echo "::error::out/.config lacks CONFIG_SECURITY_LANDLOCK=y"; exit 1; }
-          echo "all 7 Landlock objects built"
 
       - name: Report
         run: |
           echo "### Diagnostic kernel built" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
-            echo "branch: \`${{ inputs.branch || 'susfs-testing' }}\` @ \`$(git rev-parse --short HEAD)\`"
-            echo "subject: \`$(git log -1 --format=%s)\`"
-            echo ""
             echo "kernelrelease: \`$(make $MAKE_ARGS -s kernelrelease)\`"
-            echo ""
-            echo "**Landlock is ENABLED on this image** and is the feature under"
-            echo "test. It has never run at boot before, which is exactly why the"
-            echo "diagnostic options are on it: a first-run LSM failure should give"
-            echo "you a backtrace, not the silent hang this board is prone to."
-            echo ""
-            echo "After flashing, confirm it is actually live:"
-            echo ""
-            echo '```'
-            echo "adb shell 'cat /sys/kernel/security/lsm'   # expect landlock first"
-            echo "adb shell 'dmesg | grep -i landlock'"
-            echo '```'
             echo ""
             echo "This image panics on hardlockup, softlockup and hung task, and"
             echo "reboots 60s after a panic. Flash it only when you intend to"
             echo "diagnose a failure."
-            echo ""
-            echo "**Check the branch and commit above match the tree you meant to"
-            echo "flash.** This image is built from that ref and nothing else."
             echo ""
             echo "After a panic: **do not power-cycle.** Reboot to fastboot and read"
             echo "the ramoops region before the next power loss destroys it."

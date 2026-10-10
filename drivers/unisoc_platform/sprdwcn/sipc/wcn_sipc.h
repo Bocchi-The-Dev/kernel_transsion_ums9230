@@ -32,7 +32,22 @@
 
 #define SIPC_SBUF_HEAD_RESERV 4
 #define SIPC_SBLOCK_HEAD_RESERV 0
-#define WCN_SIPC_DBG
+/*
+ * WCN_SIPC_DBG used to be defined here unconditionally, which turned on the
+ * WCN_HERE/WCN_HERE_CHN trace markers below for every build. Those markers
+ * fire once per sbuf/sblk list operation, i.e. per packet, and they printed
+ * through WCN_INFO() (an unconditional pr_info()). On a busy device they were
+ * the largest single consumer of the kernel log ring buffer, about 30% of
+ * it, at one printk per operation.
+ *
+ * The switch is now off by default, so the markers compile out entirely. To
+ * trace the SIPC data path, define WCN_SIPC_DBG and turn the messages on at
+ * runtime; they are pr_debug() sites, so nothing prints unless asked:
+ *
+ *	#define WCN_SIPC_DBG
+ *	echo 'file wcn_sipc.c +p' > /sys/kernel/debug/dynamic_debug/control
+ */
+/* #define WCN_SIPC_DBG */
 
 #define mbuf_list_iter(head, num, pos, posn) \
 	for (pos = head, posn = 0; posn < num && pos; posn++, pos = pos->next)
@@ -133,10 +148,14 @@ struct sipc_chn_info *wcn_sipc_channel_get(int index);
 void wcn_sipc_chn_set_status_all_false(void);
 
 #ifdef WCN_SIPC_DBG
-#define WCN_HERE WCN_INFO("[%s] %d\n", __func__, __LINE__)
-#define WCN_HERE_CHN(x) if(x==16) WCN_INFO("[%s] %d chn[%d]\n", __func__, __LINE__, x)
+#define WCN_HERE WCN_DBG("[%s] %d\n", __func__, __LINE__)
+#define WCN_HERE_CHN(x) \
+	do { \
+		if ((x) == 16) \
+			WCN_DBG("[%s] %d chn[%d]\n", __func__, __LINE__, x); \
+	} while (0)
 #else
-#define WCN_HERE
-#define WCN_HERE_CHN(x)
+#define WCN_HERE do { } while (0)
+#define WCN_HERE_CHN(x) do { } while (0)
 #endif
 #endif

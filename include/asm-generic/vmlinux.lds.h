@@ -656,6 +656,10 @@
 		__start_BTF = .;					\
 		KEEP(*(.BTF))						\
 		__stop_BTF = .;						\
+	}								\
+	. = ALIGN(4);							\
+	.BTF_ids : AT(ADDR(.BTF_ids) - LOAD_OFFSET) {			\
+		KEEP(*(.BTF_ids))					\
 	}
 #else
 #define BTF

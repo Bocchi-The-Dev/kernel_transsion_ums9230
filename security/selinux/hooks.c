@@ -104,6 +104,10 @@
 #include "avc_ss.h"
 
 struct selinux_state selinux_state;
+#ifdef CONFIG_KSU_SUSFS
+extern struct selinux_state fake_state;
+extern bool ksu_selinux_hide_running __read_mostly;
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 /* SECMARK reference count */
 static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
@@ -3724,6 +3728,33 @@ static int selinux_file_ioctl(struct file *file, unsigned int cmd,
 	return error;
 }
 
+static int selinux_file_ioctl_compat(struct file *file, unsigned int cmd,
+			      unsigned long arg)
+{
+	/*
+	 * If we are in a 64-bit kernel running 32-bit userspace, we need to
+	 * make sure we don't compare 32-bit flags to 64-bit flags.
+	 */
+	switch (cmd) {
+	case FS_IOC32_GETFLAGS:
+		cmd = FS_IOC_GETFLAGS;
+		break;
+	case FS_IOC32_SETFLAGS:
+		cmd = FS_IOC_SETFLAGS;
+		break;
+	case FS_IOC32_GETVERSION:
+		cmd = FS_IOC_GETVERSION;
+		break;
+	case FS_IOC32_SETVERSION:
+		cmd = FS_IOC_SETVERSION;
+		break;
+	default:
+		break;
+	}
+
+	return selinux_file_ioctl(file, cmd, arg);
+}
+
 static int default_noexec;
 
 static int file_map_prot_check(struct file *file, unsigned long prot, int shared)
@@ -4681,6 +4712,13 @@ static int selinux_socket_bind(struct socket *sock, struct sockaddr *address, in
 				return -EINVAL;
 			addr4 = (struct sockaddr_in *)address;
 			if (family_sa == AF_UNSPEC) {
+				if (family == PF_INET6) {
+					/* Length check from inet6_bind_sk() */
+					if (addrlen < SIN6_LEN_RFC2133)
+						return -EINVAL;
+					/* Family check from __inet6_bind() */
+					goto err_af;
+				}
 				/* see __inet_bind(), we only want to allow
 				 * AF_UNSPEC if the address is INADDR_ANY
 				 */
@@ -6561,10 +6599,48 @@ abort_change:
 	return error;
 }
 
+#ifdef CONFIG_KSU_SUSFS
+static int my_setprocattr(const char *name, void *value, size_t size)
+{
+	u32 mysid = current_sid(), sid = 0;
+	int error;
+	char *str = value;
+
+	// apply to all app uids
+	if (likely(current_uid().val < 10000 ||
+				!ksu_selinux_hide_running ||
+				strcmp(name, "current")))
+		return selinux_setprocattr(name, value, size);
+
+	error = avc_has_perm(&selinux_state,
+				     mysid, mysid, SECCLASS_PROCESS,
+				     PROCESS__SETCURRENT, NULL);
+
+	if (error)
+		return error;
+
+	/* Obtain a SID for the context, if one was specified. */
+	if (size && str[0] && str[0] != '\n') {
+		if (str[size-1] == '\n') {
+			str[size-1] = 0;
+			size--;
+		}
+
+		error = security_context_to_sid(&fake_state, value, size,
+						&sid, GFP_KERNEL);
+		if (error)
+			return error;
+	}
+
+	return selinux_setprocattr(name, value, size);
+}
+#endif // #ifdef CONFIG_KSU_SUSFS
+
 static int selinux_ismaclabel(const char *name)
 {
 	return (strcmp(name, XATTR_SELINUX_SUFFIX) == 0);
 }
+
 
 static int selinux_secid_to_secctx(u32 secid, char **secdata, u32 *seclen)
 {
@@ -7045,6 +7121,7 @@ static struct security_hook_list selinux_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(file_permission, selinux_file_permission),
 	LSM_HOOK_INIT(file_alloc_security, selinux_file_alloc_security),
 	LSM_HOOK_INIT(file_ioctl, selinux_file_ioctl),
+	LSM_HOOK_INIT(file_ioctl_compat, selinux_file_ioctl_compat),
 	LSM_HOOK_INIT(mmap_file, selinux_mmap_file),
 	LSM_HOOK_INIT(mmap_addr, selinux_mmap_addr),
 	LSM_HOOK_INIT(file_mprotect, selinux_file_mprotect),
@@ -7105,7 +7182,11 @@ static struct security_hook_list selinux_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(d_instantiate, selinux_d_instantiate),
 
 	LSM_HOOK_INIT(getprocattr, selinux_getprocattr),
+#ifdef CONFIG_KSU_SUSFS
+	LSM_HOOK_INIT(setprocattr, my_setprocattr),
+#else
 	LSM_HOOK_INIT(setprocattr, selinux_setprocattr),
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 	LSM_HOOK_INIT(ismaclabel, selinux_ismaclabel),
 	LSM_HOOK_INIT(secid_to_secctx, selinux_secid_to_secctx),

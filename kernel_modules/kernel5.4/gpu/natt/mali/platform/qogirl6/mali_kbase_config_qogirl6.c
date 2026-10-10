@@ -978,7 +978,16 @@ int kbase_platform_set_freq_volt(int freq, int volt)
 
 	freq = freq/FREQ_KHZ;
 	index = freq_search(gpu_dvfs_ctx.freq_list, gpu_dvfs_ctx.freq_list_len, freq);
-	printk(KERN_ERR "mali GPU_DVFS %s index=%d cur_freq=%d cur_volt=%d --> freq=%d volt=%d gpu_power_on=%d gpu_clock_on=%d \n",
+	/*
+	 * This is the normal DVFS path, called on every clock/voltage change the
+	 * GPU governor asks for, and it runs before anything else in the
+	 * function. Logging it at KERN_ERR made an ordinary frequency step look
+	 * like a fault and put a printk on the GPU DVFS path. It stays available
+	 * via
+	 *   echo 'file mali_kbase_config_qogirl6.c +p' \
+	 *       > /sys/kernel/debug/dynamic_debug/control
+	 */
+	pr_debug("mali GPU_DVFS %s index=%d cur_freq=%d cur_volt=%d --> freq=%d volt=%d gpu_power_on=%d gpu_clock_on=%d \n",
 		__func__, index, gpu_dvfs_ctx.freq_cur->freq, gpu_dvfs_ctx.cur_voltage, freq, volt,
 		gpu_dvfs_ctx.gpu_power_on, gpu_dvfs_ctx.gpu_clock_on);
 	if (0 <= index)
@@ -1060,7 +1069,8 @@ void kbase_platform_modify_target_freq(struct device *dev, unsigned long *target
 
 	if (1 == modify_flag)
 	{
-		printk(KERN_ERR "GPU_DVFS %s gpu_boost_level:%d min_freq=%dMHz max_freq=%dMHz target_freq=%dMHz \n",
+		/* Clamping the target into [min,max] is normal, not an error. */
+		pr_debug("GPU_DVFS %s gpu_boost_level:%d min_freq=%dMHz max_freq=%dMHz target_freq=%dMHz \n",
 			__func__, gpu_boost_level, freq_min->freq / FREQ_KHZ, freq_max->freq / FREQ_KHZ, *target_freq / (FREQ_KHZ * FREQ_KHZ));
 	}
 }

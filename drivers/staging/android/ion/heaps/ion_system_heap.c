@@ -16,9 +16,27 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
+#include "ion_debug.h"
 #include "ion_page_pool.h"
 
 #define NUM_ORDERS ARRAY_SIZE(orders)
+
+/*
+ * The per-allocation accounting in ion_system_heap_allocate() is debug-only.
+ * As an unconditional pr_info() it logged one line per ION allocation, which
+ * on a busy device reached ~37 lines/s from a handful of processes and ate a
+ * third of the kernel log ring buffer, evicting the boot log. It is now an
+ * ION_DEBUG() (pr_debug) site, so it is silent by default and can be turned
+ * back on at runtime with:
+ *
+ *	echo 'file ion_system_heap.c +p' > /sys/kernel/debug/dynamic_debug/control
+ *
+ * The accounting itself costs two ktime_get_real_ts64() calls per allocation,
+ * so only build it when ION_DEBUG() actually compiles to a printk.
+ */
+#if defined(CONFIG_DYNAMIC_DEBUG) || defined(CONFIG_DEBUG_KERNEL)
+#define ION_SYSTEM_HEAP_ALLOC_STATS
+#endif
 
 static gfp_t high_order_gfp_flags = (GFP_HIGHUSER | __GFP_ZERO | __GFP_NOWARN |
 				     __GFP_NORETRY) & ~__GFP_RECLAIM;
@@ -137,18 +155,22 @@ static int ion_system_heap_allocate(struct ion_heap *heap,
 	int i = 0;
 	unsigned long size_remaining = PAGE_ALIGN(size);
 	unsigned int max_order = orders[0];
+	unsigned int sz;
+	struct page_info *info, *tmp_info;
+#ifdef ION_SYSTEM_HEAP_ALLOC_STATS
 	struct timespec64 val_start, val_end;
 	u64 time_start, time_end;
-	unsigned int sz;
 	unsigned long pool_sz = 0, buddy_sz = 0;
 	unsigned int buddy_orders[NUM_ORDERS] = {0};
-	struct page_info *info, *tmp_info;
+#endif
 
 	if (size / PAGE_SIZE > totalram_pages() / 2)
 		return -ENOMEM;
 
+#ifdef ION_SYSTEM_HEAP_ALLOC_STATS
 	ktime_get_real_ts64(&val_start);
 	time_start = val_start.tv_sec * 1000000LL + val_start.tv_nsec / 1000;
+#endif
 	INIT_LIST_HEAD(&pages);
 	INIT_LIST_HEAD(&pages_from_pool);
 	while (size_remaining > 0) {
@@ -157,30 +179,21 @@ static int ion_system_heap_allocate(struct ion_heap *heap,
 		if (!info)
 			goto free_pages;
 		sz = (1 << info->order) * PAGE_SIZE;
-		if (info->from_pool) {
-			pool_sz += sz;
+		if (info->from_pool)
 			list_add_tail(&info->list, &pages_from_pool);
-		} else {
-			int index;
-
-			for (index = 0; index < NUM_ORDERS; index++) {
-				if (info->order == orders[index]) {
-					buddy_orders[index]++;
-					break;
-				}
-			}
-			buddy_sz += sz;
+		else
 			list_add_tail(&info->list, &pages);
-		}
 		size_remaining -= sz;
 		max_order = info->order;
 		i++;
 	}
+#ifdef ION_SYSTEM_HEAP_ALLOC_STATS
 	ktime_get_real_ts64(&val_end);
 	time_end = val_end.tv_sec * 1000000LL + val_end.tv_nsec / 1000;
-	pr_info("%s,tid:%-5d, size:%8ld, time:%11lldus, pool:%ld, bud: %ld, ord 8:%d, 4:%d, 0:%d\n",
-		__func__, current->pid, size, time_end - time_start, pool_sz, buddy_sz,
+	ION_DEBUG("tid:%-5d, size:%8ld, time:%11lldus, pool:%ld, bud: %ld, ord 8:%d, 4:%d, 0:%d\n",
+		current->pid, size, time_end - time_start, pool_sz, buddy_sz,
 		buddy_orders[0], buddy_orders[1], buddy_orders[2]);
+#endif
 	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
 		goto free_pages;

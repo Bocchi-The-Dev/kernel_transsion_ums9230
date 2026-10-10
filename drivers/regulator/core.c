@@ -1708,11 +1708,15 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 		}
 	}
 
-	if (err != -EEXIST)
+	if (err != -EEXIST) {
 		regulator->debugfs = debugfs_create_dir(supply_name, rdev->debugfs);
-	if (IS_ERR(regulator->debugfs))
+		if (IS_ERR(regulator->debugfs)) {
 		rdev_dbg(rdev, "Failed to create debugfs directory\n");
+			regulator->debugfs = NULL;
+		}
+	}
 
+	if (regulator->debugfs) {
 	debugfs_create_u32("uA_load", 0444, regulator->debugfs,
 			   &regulator->uA_load);
 	debugfs_create_u32("min_uV", 0444, regulator->debugfs,
@@ -1721,6 +1725,7 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 			   &regulator->voltage[PM_SUSPEND_ON].max_uV);
 	debugfs_create_file("constraint_flags", 0444, regulator->debugfs,
 			    regulator, &constraint_flags_fops);
+	}
 
 	/*
 	 * Check now if the regulator is an always on regulator - if
@@ -2662,6 +2667,7 @@ static int _regulator_enable(struct regulator *regulator)
 		/* Fallthrough on positive return values - already enabled */
 	}
 
+	if (regulator->enable_count == 1)
 	rdev->use_count++;
 
 	return 0;
@@ -2740,10 +2746,12 @@ static int _regulator_disable(struct regulator *regulator)
 
 	lockdep_assert_held_once(&rdev->mutex.base);
 
-	if (WARN(rdev->use_count <= 0,
+	if (WARN(regulator->enable_count == 0,
 		 "unbalanced disables for %s\n", rdev_get_name(rdev)))
 		return -EIO;
 
+	if (regulator->enable_count == 1) {
+	/* disabling last enable_count from this regulator */
 	/* are we the last user and permitted to disable ? */
 	if (rdev->use_count == 1 &&
 	    (rdev->constraints && !rdev->constraints->always_on)) {
@@ -2771,6 +2779,7 @@ static int _regulator_disable(struct regulator *regulator)
 		rdev->use_count = 0;
 	} else if (rdev->use_count > 1) {
 		rdev->use_count--;
+	}
 	}
 
 	if (ret == 0)
@@ -3069,6 +3078,7 @@ struct regmap *regulator_get_regmap(struct regulator *regulator)
 
 	return map ? map : ERR_PTR(-EOPNOTSUPP);
 }
+EXPORT_SYMBOL_GPL(regulator_get_regmap);
 
 /**
  * regulator_get_hardware_vsel_register - get the HW voltage selector register
@@ -5056,6 +5066,7 @@ static void regulator_remove_coupling(struct regulator_dev *rdev)
 				 err);
 	}
 
+	rdev->coupling_desc.n_coupled = 0;
 	kfree(rdev->coupling_desc.coupled_rdevs);
 	rdev->coupling_desc.coupled_rdevs = NULL;
 }
@@ -5355,15 +5366,11 @@ wash:
 	mutex_lock(&regulator_list_mutex);
 	regulator_ena_gpio_free(rdev);
 	mutex_unlock(&regulator_list_mutex);
-	put_device(&rdev->dev);
-	rdev = NULL;
 clean:
 	if (dangling_of_gpiod)
 		gpiod_put(config->ena_gpiod);
-	if (rdev && rdev->dev.of_node)
-		of_node_put(rdev->dev.of_node);
-	kfree(rdev);
 	kfree(config);
+	put_device(&rdev->dev);
 rinse:
 	if (dangling_cfg_gpiod)
 		gpiod_put(cfg->ena_gpiod);

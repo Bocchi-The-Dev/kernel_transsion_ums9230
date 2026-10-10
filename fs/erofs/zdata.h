@@ -8,6 +8,7 @@
 #define __EROFS_FS_ZDATA_H
 
 #include <linux/kthread.h>
+#include <linux/overflow.h>
 #include "internal.h"
 #include "zpvec.h"
 
@@ -60,16 +61,16 @@ struct z_erofs_pcluster {
 	/* A: point to next chained pcluster or TAILs */
 	z_erofs_next_pcluster_t next;
 
-	/* A: compressed pages (including multi-usage pages) */
-	struct page *compressed_pages[Z_EROFS_CLUSTER_MAX_PAGES];
-
 	/* A: lower limit of decompressed length and if full length or not */
 	unsigned int length;
 
 	/* I: compression algorithm format */
 	unsigned char algorithmformat;
-	/* I: bit shift of physical cluster size */
-	unsigned char clusterbits;
+	/* I: # of compressed pages (variable for big pcluster) */
+	unsigned short pclusterpages;
+
+	/* A: compressed pages (including multi-usage pages) */
+	struct page *compressed_pages[];
 };
 
 #define z_erofs_primarycollection(pcluster) (&(pcluster)->primary_collection)
@@ -83,7 +84,9 @@ struct z_erofs_pcluster {
 
 #define Z_EROFS_PCLUSTER_NIL            (NULL)
 
-#define Z_EROFS_WORKGROUP_SIZE  sizeof(struct z_erofs_pcluster)
+#define Z_EROFS_WORKGROUP_SIZE \
+	struct_size((struct z_erofs_pcluster *)0, compressed_pages, \
+		    Z_EROFS_CLUSTER_MAX_PAGES)
 
 struct z_erofs_unzip_io {
 	atomic_t pending_bios;

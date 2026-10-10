@@ -158,8 +158,17 @@ static int sprd_wdt_fiq_load_value(struct sprd_wdt_fiq *wdt, u32 timeout,
 	u32 tmr_step = timeout * SPRD_WDT_FIQ_CNT_STEP;
 	u32 prtmr_step = pretimeout * SPRD_WDT_FIQ_CNT_STEP;
 
-	pr_err("sprd_wdt_fiq: sprd wdt load value timeout =%d, pretimeout =%d\n",
-	       timeout, pretimeout);
+	/*
+	 * This is not an error path. The only failure return below is the
+	 * -EBUSY at the end, and it happens after the register writes, so a
+	 * message printed here can never be reporting a failure. Loading the
+	 * timeout is the normal success case for the hang-debug watchdog,
+	 * which re-arms it periodically, so log it at debug level instead of
+	 * error level. On a device where this ran every 8s it produced roughly
+	 * 10800 bogus ERROR lines per day and hid real errors behind them.
+	 */
+	pr_debug("sprd_wdt_fiq: sprd wdt load value timeout =%d, pretimeout =%d\n",
+		timeout, pretimeout);
 	wdt->wdt_load = jiffies;
 	sprd_wdt_fiq_unlock(wdt);
 	writel_relaxed((tmr_step >> SPRD_WDT_FIQ_CNT_HIGH_SHIFT) &
@@ -186,8 +195,12 @@ static int sprd_wdt_fiq_load_value(struct sprd_wdt_fiq *wdt, u32 timeout,
 		cpu_relax();
 	} while (delay_cnt++ < SPRD_WDT_FIQ_LOAD_TIMEOUT);
 
-	if (delay_cnt >= SPRD_WDT_FIQ_LOAD_TIMEOUT)
+	if (delay_cnt >= SPRD_WDT_FIQ_LOAD_TIMEOUT) {
+		/* The load never completed, so this one really is a failure. */
+		pr_debug("sprd_wdt_fiq: load value timed out, timeout=%d pretimeout=%d\n",
+			 timeout, pretimeout);
 		return -EBUSY;
+	}
 	return 0;
 }
 

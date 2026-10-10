@@ -63,6 +63,9 @@
 #include <linux/oom.h>
 #include <linux/compat.h>
 #include <linux/vmalloc.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -702,7 +705,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		    unsigned long stack_top,
 		    int executable_stack)
 {
-	unsigned long ret;
+	int ret;
 	unsigned long stack_shift;
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma = bprm->vma;
@@ -720,6 +723,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		stack_base = STACK_SIZE_MAX;
 
 	/* Add space for stack randomization. */
+	if (current->flags & PF_RANDOMIZE)
 	stack_base += (STACK_RND_MASK << PAGE_SHIFT);
 
 	/* Make sure we didn't let the argument array grow too large. */
@@ -837,6 +841,7 @@ int transfer_args_to_stack(struct linux_binprm *bprm,
 			goto out;
 	}
 
+	bprm->exec += *sp_location - MAX_ARG_PAGES * PAGE_SIZE;
 	*sp_location = sp;
 
 out:
@@ -1558,6 +1563,7 @@ static void bprm_fill_uid(struct linux_binprm *bprm)
 	unsigned int mode;
 	kuid_t uid;
 	kgid_t gid;
+	int err;
 
 	/*
 	 * Since this can be called multiple times (via prepare_binprm),
@@ -1582,11 +1588,16 @@ static void bprm_fill_uid(struct linux_binprm *bprm)
 	/* Be careful if suid/sgid is set */
 	inode_lock(inode);
 
-	/* reload atomically mode/uid/gid now that lock held */
+	/* Atomically reload and check mode/uid/gid now that lock held. */
 	mode = inode->i_mode;
 	uid = inode->i_uid;
 	gid = inode->i_gid;
+	err = inode_permission(inode, MAY_EXEC);
 	inode_unlock(inode);
+
+	/* Did the exec bit vanish out from under us? Give up. */
+	if (err)
+		return;
 
 	/* We ignore suid/sgid if there are no mappings for them in the ns */
 	if (!kuid_has_mapping(bprm->cred->user_ns, uid) ||
@@ -1913,9 +1924,16 @@ out_ret:
 	return retval;
 }
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
-				void *argv, void *envp, int *flags);
+#ifdef CONFIG_KSU_SUSFS
+extern struct static_key_true ksu_su_compat_enabled;
+extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
+extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags);
+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+				void *envp, int *flags);
+extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+				void *envp, int *flags, int *retval);
 #endif
 
 static int do_execveat_common(int fd, struct filename *filename,
@@ -1923,10 +1941,34 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
-#ifdef CONFIG_KSU_MANUAL_HOOK
-	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-#endif
+#ifdef CONFIG_KSU_SUSFS
+{
+	int retval;
+	bool is_su_session = false;
+
+	if (IS_ERR(filename))
+		return PTR_ERR(filename);
+
+	if (likely(susfs_is_current_proc_no_su()))
+		goto orig_flow;
+
+	if (static_branch_likely(&ksu_su_compat_enabled)) {
+		if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
+			is_su_session = !ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+		} else {
+			is_su_session = !ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
+		}
+	}
+
+orig_flow:
+	retval = __do_execve_file(fd, filename, argv, envp, flags, NULL);
+	if (unlikely(is_su_session))
+		(void)ksu_handle_post_execveat_sucompat(&fd, &filename, &argv, &envp, &flags, &retval);
+	return retval;
+}
+#else
 	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
+#endif
 }
 
 int do_execve_file(struct file *file, void *__argv, void *__envp)

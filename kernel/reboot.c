@@ -66,6 +66,7 @@ EXPORT_SYMBOL_GPL(pm_power_off_prepare);
 void emergency_restart(void)
 {
 	kmsg_dump(KMSG_DUMP_EMERG);
+	system_state = SYSTEM_RESTART;
 	machine_emergency_restart();
 }
 EXPORT_SYMBOL_GPL(emergency_restart);
@@ -309,9 +310,8 @@ DEFINE_MUTEX(system_transition_mutex);
  *
  * reboot doesn't sync: do that yourself before calling this.
  */
-#ifdef CONFIG_KSU_MANUAL_HOOK
-extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
-				void __user **arg);
+#ifdef CONFIG_KSU_SUSFS
+extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
 #endif
 
 SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
@@ -321,7 +321,17 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	char buffer[256];
 	int ret = 0;
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
+#ifdef CONFIG_KSU_SUSFS
+	/*
+	 * KernelSU-Next's ksu_handle_sys_reboot() returns 0 on every path: it is
+	 * written for the kprobe convention where 0 means "keep executing the
+	 * original instruction". The return value must therefore be DISCARDED.
+	 *
+	 * This wrapper was written for SukiSU-Ultra, which returned -EINVAL for
+	 * any non-KSU magic so that `if (ret) goto orig_flow;` fell through to the
+	 * real reboot. With KernelSU-Next that branch is never taken, so
+	 * `return ret` returned 0 and every reboot(2) silently did nothing.
+	 */
 	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
 #endif
 	/* We only trust the superuser with rebooting the system. */
