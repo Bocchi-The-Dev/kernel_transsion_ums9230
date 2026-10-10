@@ -1,6 +1,6 @@
 [submodule "KernelSU"]
 	path = KernelSU
-	url = https://github.com/ReSukiSU/ReSukiSU.git
+	url = https://github.com/backslashxx/KernelSU.git
 [submodule "nomount"]
 	path = nomount
 	url = https://github.com/maxsteeel/nomount.git

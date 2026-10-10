@@ -50,9 +50,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # drivers/kernelsu is a symlink into the KernelSU-Next submodule.
-          # Without this the link dangles and the build dies with
-          # "drivers/kernelsu: No such file or directory".
+          # drivers/kernelsu is a symlink into the KernelSU submodule
+          # (backslashxx/KernelSU). Without this the link dangles and the build
+          # dies with "drivers/kernelsu: No such file or directory".
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true

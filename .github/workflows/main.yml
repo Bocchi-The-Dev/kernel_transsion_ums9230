@@ -29,17 +29,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # drivers/kernelsu is a symlink into the KernelSU-Next submodule, and
-          # the top-level Makefile is what pulls it in (drivers/Makefile:
-          # obj-$(CONFIG_KSU) += kernelsu/).  Without this the link dangles and
-          # the build dies with "drivers/kernelsu: No such file or directory".
+          # drivers/kernelsu is a symlink into the KernelSU submodule
+          # (backslashxx/KernelSU), and the top-level Makefile is what pulls it
+          # in (drivers/Makefile: obj-$(CONFIG_KSU) += kernelsu/).  Without this
+          # the link dangles and the build dies with
+          # "drivers/kernelsu: No such file or directory".
           submodules: recursive
 
-      # ReSukiSU's kernel/Kbuild derives its version from git (rev-list --count
-      # and git describe --abbrev=0 --tags).  actions/checkout below depth 1
-      # leaves the submodule shallow and tag-less, so Kbuild falls back to the
-      # placeholder "v4.1.0" name and a bogus 30000+1+700 version code.
-      # Unshallow and pull tags so the driver reports its real v4.2.0-rc2 tag.
+      # xxksu (backslashxx/KernelSU) reports its full name via git
+      # (see KSU_FULL_NAME_FORMAT, default "%TAG_NAME%-%COMMIT_SHA%").  A shallow,
+      # tag-less submodule checkout would fall back to a placeholder; unshallow
+      # and pull tags so the driver reports its real version.
       - name: Expand KernelSU submodule history and tags
         run: |
           git -C KernelSU fetch --unshallow --tags
