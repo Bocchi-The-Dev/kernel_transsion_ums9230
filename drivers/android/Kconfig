@@ -101,3 +101,10 @@ config ANDROID_VENDOR_OEM_DATA
 endif # if ANDROID
 
 endmenu
+
+config ANDROID_SIMPLE_LMK
+	bool "Android Simple Low Memory Killer"
+	depends on ANDROID
+	default y
+	help
+	  Simple Android Low Memory Killer for Android-based systems.

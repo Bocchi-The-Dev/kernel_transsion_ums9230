@@ -6485,3 +6485,4 @@ CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y
 # A line reading "CONFIG_CGROUP2=y" here would be silently discarded by
 # defconfig -- kconfig drops unknown symbols without a warning.
 
+CONFIG_ANDROID_SIMPLE_LMK=y
