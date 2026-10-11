@@ -1,0 +1,387 @@
+commit 421bcbe5c281e9e4e2fe293e29cba55f28434490
+Author: Bocchi-The-Dev <Bocchi-The-Dev@noreply.github.com>
+Date:   Sun Oct 11 12:31:14 2026 +0100
+
+    kernelsu: add susfs glue for xxksu as a build-time patch
+
+diff --git a/patches/xxksu-susfs.patch b/patches/xxksu-susfs.patch
+new file mode 100644
+index 000000000000..c51bd2da42e6
+--- /dev/null
++++ b/patches/xxksu-susfs.patch
+@@ -0,0 +1,375 @@
++diff --git a/kernel/Kconfig b/kernel/Kconfig
++index ed3165b9e..3a8f2429d 100644
++--- a/kernel/Kconfig
+++++ b/kernel/Kconfig
++@@ -131,4 +131,81 @@ config KSU_HEURISTIC_IN_TREE_BUILD
++ 	depends on KSU
++ 	default y
++ 
+++config KSU_SUSFS
+++	bool "SUSFS support"
+++	depends on KSU
+++	depends on THREAD_INFO_IN_TASK && 64BIT
+++	default n
+++	help
+++	  Enable the susfs kernel-side hiding features. Requires the susfs
+++	  sources in the kernel tree (fs/susfs.c, built when this is set) and
+++	  a userspace capable of the SUSFS_MAGIC sys_reboot supercall
+++	  (e.g. the susfs4ksu ksu_susfs tool / ksu_module_susfs).
+++
+++	  Enabling this without the corresponding tree support will fail to
+++	  link.
+++
+++if KSU_SUSFS
+++
+++config KSU_SUSFS_SUS_PATH
+++	bool "susfs: hide suspicious paths"
+++	default y
+++	help
+++	  Allow hiding user-defined paths (and their sub-paths) from various
+++	  system calls. Effective only on zygote-spawned app processes.
+++
+++config KSU_SUSFS_SUS_MOUNT
+++	bool "susfs: hide suspicious mounts"
+++	default y
+++	help
+++	  Assign fake mnt_id/mnt_group_id to mounts created by the ksu
+++	  process, and hide sus mounts from non-su processes.
+++
+++config KSU_SUSFS_SUS_KSTAT
+++	bool "susfs: spoof suspicious kstat"
+++	default y
+++	help
+++	  Allow spoofing the kstat of user-defined files/directories.
+++
+++config KSU_SUSFS_SPOOF_UNAME
+++	bool "susfs: spoof uname"
+++	default y
+++	help
+++	  Allow spoofing the string returned by the uname syscall.
+++
+++config KSU_SUSFS_ENABLE_LOG
+++	bool "susfs: enable kernel logging"
+++	default y
+++	help
+++	  Allow logging susfs activity to the kernel log.
+++
+++config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+++	bool "susfs: hide ksu and susfs symbols from /proc/kallsyms"
+++	default y
+++	help
+++	  Automatically hide ksu and susfs symbols from /proc/kallsyms.
+++
+++config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+++	bool "susfs: spoof /proc/cmdline or /proc/bootconfig"
+++	default y
+++	help
+++	  Spoof /proc/bootconfig (GKI) or /proc/cmdline (non-GKI) with a
+++	  user-defined file.
+++
+++config KSU_SUSFS_OPEN_REDIRECT
+++	bool "susfs: redirect a path to another (experimental)"
+++	default y
+++	help
+++	  Allow redirecting a target path to be opened with another
+++	  user-defined path.
+++
+++config KSU_SUSFS_SUS_MAP
+++	bool "susfs: hide mmapped real files from proc maps"
+++	default y
+++	help
+++	  Allow hiding mmapped real files from the various /proc/<pid> map
+++	  interfaces. Does not hide anon memory.
+++
+++endif # KSU_SUSFS
+++
++ endmenu
++diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
++index 1d8cd81b8..95fb813ff 100644
++--- a/kernel/feature/kernel_umount.c
+++++ b/kernel/feature/kernel_umount.c
++@@ -1,3 +1,7 @@
+++#ifdef CONFIG_KSU_SUSFS
+++extern struct work_struct susfs_extra_works;
+++#endif
+++
++ static bool ksu_kernel_umount_enabled __read_mostly = true;
++ 
++ static int kernel_umount_feature_get(u64 *value)
++@@ -78,6 +82,20 @@ static inline int ksu_handle_umount(struct cred *new, const struct cred *old)
++ 	uid_t new_uid = ksu_get_uid_t(new->uid);
++ 	uid_t old_uid = ksu_get_uid_t(old->uid);
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++	/*
+++	 * susfs: mark app/isolated processes as umounted regardless of whether
+++	 * we actually umount anything, so that susfs' hide paths activate for
+++	 * them (they gate on TIF_PROC_UMOUNTED + uid >= 10000). The actual
+++	 * sus_path-loop processing is deferred to a workqueue.
+++	 */
+++	if (is_appuid(new_uid) || new_uid == WEBVIEW_ZYGOTE_UID || is_isolated_process(new_uid)) {
+++		susfs_set_current_proc_umounted();
+++		if (!work_pending(&susfs_extra_works))
+++			schedule_work(&susfs_extra_works);
+++	}
+++#endif
+++
++ 	if (!ksu_kernel_umount_enabled)
++ 		return 0;
++ 
++diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
++index 925798048..327d416a0 100644
++--- a/kernel/hook/setuid_hook.c
+++++ b/kernel/hook/setuid_hook.c
++@@ -21,6 +21,12 @@ static __always_inline void ksu_handle_setresuid_cred(struct cred *new, const st
++ 	if (ksu_is_allow_uid_for_current(new_uid))
++ 		goto kill_seccomp;
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++	// susfs: this is a non-su app process, it must not see ksu/susfs
+++	// artifacts. The umounted flag is handled in ksu_handle_umount().
+++	susfs_set_current_proc_no_su();
+++#endif
+++
++ 	// Handle kernel umount
++ 	ksu_handle_umount(new, old);
++ 	return;
++@@ -31,6 +37,10 @@ install_ksu_fd:
++ 
++ kill_seccomp:
++ 	disable_seccomp();
+++#ifdef CONFIG_KSU_SUSFS
+++	// susfs: su/manager processes are allowed to see everything.
+++	susfs_clear_current_proc_no_su();
+++#endif
++ 	set_thread_flag(TIF_KSU_MANAGED); // sucompat fast-path
++ 	return;
++ }
++diff --git a/kernel/ksu.c b/kernel/ksu.c
++index 93c6f808e..6dc6c374a 100644
++--- a/kernel/ksu.c
+++++ b/kernel/ksu.c
++@@ -87,6 +87,11 @@
++ #include "downstream/toolkit.h"
++ #include "downstream/vmap_patch.h"
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++#include <linux/workqueue.h>
+++#include <linux/susfs.h>
+++#endif
+++
++ #ifdef CONFIG_KSU_HOSTSREDIRECT
++ #include "downstream/ksu_hostsredirect.h"
++ #endif
++@@ -247,6 +252,10 @@ static int __init kernelsu_init(void)
++ 
++ 	ksu_selinux_hide_init(); // so the feature is registered
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++	susfs_init();
+++#endif
+++
++ #ifdef CONFIG_KSU_FEATURE_SULOG	
++ 	ksu_sulog_init(); // so the feature is registered
++ #endif
++diff --git a/kernel/runtime/ksud.c b/kernel/runtime/ksud.c
++index 57696ce8d..286eed29e 100644
++--- a/kernel/runtime/ksud.c
+++++ b/kernel/runtime/ksud.c
++@@ -94,6 +94,12 @@ void on_boot_completed(void)
++ 	pr_info("on_boot_completed!\n");
++ 	track_throne(true);
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++	// susfs watches /sdcard/Android/data with fsnotify to invalidate its
+++	// cached sus_path entries once the sdcard is decrypted.
+++	susfs_start_sdcard_monitor_fn();
+++#endif
+++
++ #ifdef CONFIG_KSU_HOSTSREDIRECT
++ 	ksu_hostsredirect_init();
++ #endif
++diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
++index 04e5ffe0c..da245c5c0 100644
++--- a/kernel/selinux/selinux.c
+++++ b/kernel/selinux/selinux.c
++@@ -15,6 +15,14 @@ static u32 cached_zygote_sid __read_mostly = 0;
++ static u32 cached_init_sid __read_mostly = 0;
++ u32 ksu_file_sid __read_mostly = 0;
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++// susfs (see security/selinux/avc.c) wants the ksu and priv_app SIDs to
+++// spoof the target context in AVC audit logs.
+++u32 susfs_ksu_sid __read_mostly = 0;
+++u32 susfs_priv_app_sid __read_mostly = 0;
+++#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
+++#endif
+++
++ static int transive_to_domain(const char *domain, struct cred *cred, bool clear_exec_sid)
++ {
++ 	u32 sid;
++@@ -156,6 +164,18 @@ void cache_sid(void)
++ 	} else {
++ 		pr_info("Cached ksu_file SID: %u\n", ksu_file_sid);
++ 	}
+++
+++#ifdef CONFIG_KSU_SUSFS
+++	err = security_secctx_to_secid(KERNEL_PRIV_APP_DOMAIN, strlen(KERNEL_PRIV_APP_DOMAIN), &susfs_priv_app_sid);
+++	if (err) {
+++		pr_warn("Failed to cache susfs_priv_app SID: %d\n", err);
+++		susfs_priv_app_sid = 0;
+++	} else {
+++		pr_info("Cached susfs_priv_app SID: %u\n", susfs_priv_app_sid);
+++	}
+++
+++	susfs_ksu_sid = cached_su_sid;
+++#endif
++ }
++ 
++ /*
++@@ -212,6 +232,13 @@ bool is_init(const struct cred *cred)
++ 	return is_sid_match(cred, cached_init_sid, INIT_CONTEXT);
++ }
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++bool susfs_is_current_ksu_domain(void)
+++{
+++	return is_ksu_domain();
+++}
+++#endif // #ifdef CONFIG_KSU_SUSFS
+++
++ void escape_to_root_for_adb_root(void)
++ {
++ 	struct cred *cred = prepare_creds();
++diff --git a/kernel/selinux/selinux.h b/kernel/selinux/selinux.h
++index cbeac553d..91eda47a3 100644
++--- a/kernel/selinux/selinux.h
+++++ b/kernel/selinux/selinux.h
++@@ -35,6 +35,12 @@ int handle_sepolicy(void __user *user_data, u64 data_len);
++ 
++ void setup_ksu_cred();
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++extern u32 susfs_ksu_sid;
+++extern u32 susfs_priv_app_sid;
+++bool susfs_is_current_ksu_domain(void);
+++#endif // #ifdef CONFIG_KSU_SUSFS
+++
++ void escape_to_root_for_adb_root();
++ 
++ #endif
++diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
++index 350b03c50..1af1d17c8 100644
++--- a/kernel/supercall/dispatch.c
+++++ b/kernel/supercall/dispatch.c
++@@ -772,3 +772,77 @@ void __init ksu_supercall_dump_commands(void)
++ }
++ 
++ void ksu_supercall_cleanup_state(void) {}
+++
+++#ifdef CONFIG_KSU_SUSFS
+++/*
+++ * susfs command dispatcher. The setters themselves live in the kernel tree
+++ * (fs/susfs.c, built when CONFIG_KSU_SUSFS is set); their prototypes are in
+++ * <linux/susfs_def.h>. Userspace reaches this via the reboot syscall:
+++ *   reboot(0xDEADBEEF, 0xFAFAFAFA, cmd, &info)
+++ */
+++int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+++{
+++	switch (cmd) {
+++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+++	case CMD_SUSFS_ADD_SUS_PATH:
+++		susfs_add_sus_path(arg);
+++		return 0;
+++	case CMD_SUSFS_ADD_SUS_PATH_LOOP:
+++		susfs_add_sus_path_loop(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+++	case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS:
+++		susfs_set_hide_sus_mnts_for_non_su_procs(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+++	case CMD_SUSFS_ADD_SUS_KSTAT:
+++	case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
+++		susfs_add_sus_kstat(arg);
+++		return 0;
+++	case CMD_SUSFS_UPDATE_SUS_KSTAT:
+++		susfs_update_sus_kstat(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+++#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+++	case CMD_SUSFS_SET_UNAME:
+++		susfs_set_uname(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+++#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+++	case CMD_SUSFS_ENABLE_LOG:
+++		susfs_enable_log(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+++#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+++	case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+++		susfs_set_cmdline_or_bootconfig(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+++#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+++	case CMD_SUSFS_ADD_OPEN_REDIRECT:
+++		susfs_add_open_redirect(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+++	case CMD_SUSFS_ADD_SUS_MAP:
+++		susfs_add_sus_map(arg);
+++		return 0;
+++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+++	case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:
+++		susfs_set_avc_log_spoofing(arg);
+++		return 0;
+++	case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+++		susfs_get_enabled_features(arg);
+++		return 0;
+++	case CMD_SUSFS_SHOW_VARIANT:
+++		susfs_show_variant(arg);
+++		return 0;
+++	case CMD_SUSFS_SHOW_VERSION:
+++		susfs_show_version(arg);
+++		return 0;
+++	}
+++	return 0;
+++}
+++#endif // #ifdef CONFIG_KSU_SUSFS
++diff --git a/kernel/supercall/supercall.c b/kernel/supercall/supercall.c
++index 59ec582f5..0aeed67b7 100644
++--- a/kernel/supercall/supercall.c
+++++ b/kernel/supercall/supercall.c
++@@ -106,6 +106,15 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user
++ 		return 0;
++ 	}
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++	// susfs control plane: userspace (ksu_susfs / ksu_module_susfs) issues
+++	// reboot(KSU_INSTALL_MAGIC1, SUSFS_MAGIC, cmd, arg) and we dispatch the
+++	// command to the susfs setters. This only configures kernel state; the
+++	// real reboot syscall still runs afterwards.
+++	if (magic2 == SUSFS_MAGIC && current_uid().val == 0)
+++		return ksu_handle_susfs_cmd(cmd, arg);
+++#endif
+++
++ 	toolkit_handle_sys_reboot(magic1, magic2, cmd, arg);
++ 	return 0;
++ }
++diff --git a/kernel/supercall/supercall.h b/kernel/supercall/supercall.h
++index 65579b7ce..37db70653 100644
++--- a/kernel/supercall/supercall.h
+++++ b/kernel/supercall/supercall.h
++@@ -23,4 +23,8 @@ bool ksu_is_su_session_fd(const struct file *filp);
++ void ksu_supercalls_init(void);
++ void ksu_supercalls_exit(void);
++ 
+++#ifdef CONFIG_KSU_SUSFS
+++int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg);
+++#endif // #ifdef CONFIG_KSU_SUSFS
+++
++ #endif // __KSU_H_SUPERCALLS
