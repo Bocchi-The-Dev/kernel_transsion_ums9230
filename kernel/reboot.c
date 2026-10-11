@@ -310,7 +310,7 @@ DEFINE_MUTEX(system_transition_mutex);
  *
  * reboot doesn't sync: do that yourself before calling this.
  */
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU
 extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
 #endif
 
@@ -321,16 +321,15 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	char buffer[256];
 	int ret = 0;
 
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU
 	/*
-	 * KernelSU-Next's ksu_handle_sys_reboot() returns 0 on every path: it is
-	 * written for the kprobe convention where 0 means "keep executing the
-	 * original instruction". The return value must therefore be DISCARDED.
-	 *
-	 * This wrapper was written for SukiSU-Ultra, which returned -EINVAL for
-	 * any non-KSU magic so that `if (ret) goto orig_flow;` fell through to the
-	 * real reboot. With KernelSU-Next that branch is never taken, so
-	 * `return ret` returned 0 and every reboot(2) silently did nothing.
+	 * KernelSU-Next-style forks (xxksu) use reboot() for the supercall
+	 * handshake: a process calls reboot(0xDEADBEEF, KSU_INSTALL_MAGIC2, 0,
+	 * &fd) and the kernel replies by installing a [ksu_driver] anon fd into
+	 * that process BEFORE the CAP_SYS_BOOT check below. The hook returns 0
+	 * on every path (kprobe convention: 0 = keep running the original code),
+	 * so the return value must be DISCARDED, otherwise every reboot(2) would
+	 * silently do nothing.
 	 */
 	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
 #endif
