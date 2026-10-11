@@ -103,9 +103,24 @@ static int sprd_panel_prepare(struct drm_panel *p)
 
 	DRM_INFO("%s()\n", __func__);
 
+	/*
+	 * prepare() may be reached from several DRM state paths, so make it
+	 * idempotent: a second prepare without an intervening unprepare must
+	 * not re-enable the supply (that would inflate its use_count) nor
+	 * re-run the reset sequence.
+	 */
+	if (panel->prepared)
+		return 0;
+
 	ret = regulator_enable(panel->supply);
-	if (ret < 0)
+	if (ret < 0) {
 		DRM_ERROR("enable lcd regulator failed\n");
+		/* do not claim prepared: unprepare must not disable an
+		 * un-enabled supply, which previously triggered
+		 * "unbalanced disables for regulator-dummy" warnings.
+		 */
+		return ret;
+	}
 
 	if (panel->info.avdd_gpio) {
 		gpiod_direction_output(panel->info.avdd_gpio, 1);
