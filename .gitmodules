@@ -1,6 +1,7 @@
 [submodule "KernelSU"]
 	path = KernelSU
-	url = https://github.com/backslashxx/KernelSU.git
+	url = https://github.com/LyraVoid/FinaSU.git
+	branch = master
 [submodule "nomount"]
 	path = nomount
 	url = https://github.com/maxsteeel/nomount.git
