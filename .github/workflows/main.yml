@@ -29,22 +29,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Do not let actions/checkout initialize submodules here. The
-          # superproject may point to a missing SHA in the submodule; instead
-          # clone the submodules manually to their latest tip below so CI
-          # always uses "whatever the latest commit is".
-          submodules: false
-          fetch-depth: 0
-
-      - name: Init submodules to latest
-        run: |
-          set -euo pipefail
-          # KernelSU: clone the latest commit (shallow) into the expected path
-          if [ -d KernelSU ]; then rm -rf KernelSU; fi
-          git clone --depth 1 https://github.com/backslashxx/KernelSU.git KernelSU || git clone https://github.com/backslashxx/KernelSU.git KernelSU
-          # Nomount
-          if [ -d nomount ]; then rm -rf nomount; fi
-          git clone --depth 1 https://github.com/maxsteeel/nomount.git nomount || git clone https://github.com/maxsteeel/nomount.git nomount
+          # drivers/kernelsu is a symlink into the KernelSU submodule
+          # (backslashxx/KernelSU), and the top-level Makefile is what pulls it
+          # in (drivers/Makefile: obj-$(CONFIG_KSU) += kernelsu/).  Without this
+          # the link dangles and the build dies with
+          # "drivers/kernelsu: No such file or directory".
+          submodules: recursive
 
       # xxksu (backslashxx/KernelSU) reports its full name via git
       # (see KSU_FULL_NAME_FORMAT, default "%TAG_NAME%-%COMMIT_SHA%").  A shallow,
@@ -52,10 +42,7 @@ jobs:
       # and pull tags so the driver reports its real version.
       - name: Expand KernelSU submodule history and tags
         run: |
-          # If KernelSU was cloned above as a shallow copy, fetch tags and history
-          if [ -d KernelSU/.git ]; then
-            git -C KernelSU fetch --tags || true
-          fi
+          git -C KernelSU fetch --unshallow --tags
 
       - name: Install build dependencies
         run: |
@@ -123,6 +110,13 @@ jobs:
       #    it (its governor hooks via kbase_platform_modify_target_freq instead).
       #    With MIDGARD_DVFS=y the call in mali_kbase_pm_metrics.c
       #    (kbase_pm_get_dvfs_action) has no provider and modpost fails.
+      #  - mali_kbase.ko imports from two sibling modules, matching the stock
+      #    ko's "depends: sprd_gpu_cooling,trusty":
+      #      create/destroy_gpu_cooling_device <- drivers/thermal/sprd_gpu_cooling.ko
+      #      trusty_fast_call32                  <- drivers/trusty/trusty.ko
+      #    They are built right before the mali module so modpost can resolve
+      #    the imports (out/Module.symvers records their exports; the mali
+      #    build itself is a standalone external-module build).
       #  - CONFIG_MALI_GATOR_SUPPORT=n -> no external gator profiler dependency
       #  - MALI_JIT_PRESSURE_LIMIT_BASE=0 -> matches the vendor build (Kbuild
       #    defaults it to 1).
