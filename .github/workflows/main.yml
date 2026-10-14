@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: namespace-profile-compile
     env:
       # NB: keep this a literal -- the `runner` context is not available in
       # jobs.<id>.env, and referencing it there fails workflow validation.
