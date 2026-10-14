@@ -299,7 +299,7 @@ static void task_storage_map_free(struct bpf_map *map)
 
 	smap = (struct bpf_local_storage_map *)map;
 	bpf_local_storage_cache_idx_free(&task_cache, smap->cache_idx);
-	bpf_local_storage_map_free(smap, &bpf_task_storage_busy);
+	bpf_local_storage_map_free(smap);
 }
 
 static int task_storage_map_btf_id;
