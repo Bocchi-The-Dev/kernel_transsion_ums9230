@@ -6,7 +6,6 @@
 #include <linux/types.h>
 #include <linux/spinlock.h>
 #include <linux/bpf.h>
-#include <linux/sched.h>
 #include <linux/btf_ids.h>
 #include <linux/bpf_local_storage.h>
 #include <net/sock.h>
@@ -477,8 +476,7 @@ void bpf_local_storage_cache_idx_free(struct bpf_local_storage_cache *cache,
 	spin_unlock(&cache->idx_lock);
 }
 
-void bpf_local_storage_map_free(struct bpf_local_storage_map *smap,
-				int __percpu *busy_counter)
+void bpf_local_storage_map_free(struct bpf_local_storage_map *smap)
 {
 	struct bpf_local_storage_elem *selem;
 	struct bpf_local_storage_map_bucket *b;
@@ -507,15 +505,7 @@ void bpf_local_storage_map_free(struct bpf_local_storage_map *smap,
 		while ((selem = hlist_entry_safe(
 				rcu_dereference_raw(hlist_first_rcu(&b->list)),
 				struct bpf_local_storage_elem, map_node))) {
-			if (busy_counter) {
-				migrate_disable();
-				this_cpu_inc(*busy_counter);
-			}
 			bpf_selem_unlink(selem);
-			if (busy_counter) {
-				this_cpu_dec(*busy_counter);
-				migrate_enable();
-			}
 			cond_resched_rcu();
 		}
 		rcu_read_unlock();
