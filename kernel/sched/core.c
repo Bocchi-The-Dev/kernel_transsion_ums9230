@@ -8210,6 +8210,18 @@ static u64 cpu_shares_read_u64(struct cgroup_subsys_state *css,
 	return (u64) scale_load_down(tg->shares);
 }
 
+static s64 cpu_idle_read_s64(struct cgroup_subsys_state *css,
+			     struct cftype *cft)
+{
+	return css_tg(css)->idle;
+}
+
+static int cpu_idle_write_s64(struct cgroup_subsys_state *css,
+			      struct cftype *cft, s64 idle)
+{
+	return sched_group_set_idle(css_tg(css), idle);
+}
+
 #ifdef CONFIG_CFS_BANDWIDTH
 static DEFINE_MUTEX(cfs_constraints_mutex);
 
@@ -8561,6 +8573,11 @@ static struct cftype cpu_legacy_files[] = {
 		.read_u64 = cpu_shares_read_u64,
 		.write_u64 = cpu_shares_write_u64,
 	},
+	{
+		.name = "idle",
+		.read_s64 = cpu_idle_read_s64,
+		.write_s64 = cpu_idle_write_s64,
+	},
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH
 	{
@@ -8773,6 +8790,12 @@ static struct cftype cpu_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.read_s64 = cpu_weight_nice_read_s64,
 		.write_s64 = cpu_weight_nice_write_s64,
+	},
+	{
+		.name = "idle",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_s64 = cpu_idle_read_s64,
+		.write_s64 = cpu_idle_write_s64,
 	},
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH

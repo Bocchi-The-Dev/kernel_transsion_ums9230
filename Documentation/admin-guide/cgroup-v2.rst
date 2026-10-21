@@ -1032,6 +1032,18 @@ All time durations are in microseconds.
 	granularity is coarser for the nice values, the read value is
 	the closest approximation of the current weight.
 
+  cpu.idle
+	A read-write single value file which exists on non-root cgroups.
+	The default is "0".
+
+	This is the cgroup analog of the per-task SCHED_IDLE scheduling
+	policy.  A value of "1" makes the group use the minimum possible
+	weight and marks all of its tasks as idle for CPU selection and
+	load balancing.  A value of "0" restores normal scheduling.
+
+	Idle groups are useful for background work that should only run
+	when no other CPU capacity is needed.
+
   cpu.max
 	A read-write two value file which exists on non-root cgroups.
 	The default is "max 100000".
