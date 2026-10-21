@@ -1044,6 +1044,14 @@ All time durations are in microseconds.
 	$PERIOD duration.  "max" for $MAX indicates no limit.  If only
 	one number is written, $MAX is updated.
 
+  cpu.max.burst
+	A read-write single value file which exists on non-root cgroups.
+	The default is "0".
+
+	The burst is the maximum amount of accumulated bandwidth that can
+	be used by the group in a period.  A parent cgroup's burst is not
+	inherited by its children.
+
   cpu.pressure
 	A read-only nested-key file which exists on non-root cgroups.
 
