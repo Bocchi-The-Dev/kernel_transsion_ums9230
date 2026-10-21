@@ -860,16 +860,17 @@ __SYSCALL(__NR_faccessat2, sys_faccessat2)
 __SYSCALL(__NR_process_madvise, sys_process_madvise)
 #define __NR_epoll_pwait2 441
 __SC_COMP(__NR_epoll_pwait2, sys_epoll_pwait2, compat_sys_epoll_pwait2)
+#define __NR_mount_setattr 442
+__SYSCALL(__NR_mount_setattr, sys_mount_setattr)
 
 /*
  * Landlock. Upstream allocates 444-446, not 441-443, because 441
- * (epoll_pwait2), 442 (mount_setattr) and 443 (quotactl_fd) exist there
- * and are absent here. Keep upstream's numbers: they are the ABI, and
- * userspace built against real Landlock headers calls these exact
- * numbers. Compacting them to 441-443 would build fine and then hand
- * every Landlock call to the wrong syscall. 441-443 stay ENOSYS via
- * the [0 ... __NR_syscalls - 1] = ni_syscall default fill in
- * arch/arm64/kernel/sys.c.
+ * (epoll_pwait2), 442 (mount_setattr) and 443 (quotactl_fd) exist there.
+ * Keep upstream's numbers: they are the ABI, and userspace built against
+ * real Landlock headers calls these exact numbers. Compacting them to
+ * 441-443 would build fine and then hand every Landlock call to the wrong
+ * syscall. 443 stays ENOSYS via the [0 ... __NR_syscalls - 1] =
+ * ni_syscall default fill in arch/arm64/kernel/sys.c.
  */
 #define __NR_landlock_create_ruleset 444
 __SYSCALL(__NR_landlock_create_ruleset, sys_landlock_create_ruleset)
