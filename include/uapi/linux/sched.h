@@ -32,6 +32,7 @@
 #define CLONE_NEWPID		0x20000000	/* New pid namespace */
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
+#define CLONE_INTO_CGROUP	0x200000000ULL	/* Clone into a specific cgroup. */
 
 #ifndef __ASSEMBLY__
 /**
@@ -58,6 +59,22 @@
  * @stack_size:  The size of the stack for the child process.
  * @tls:         If CLONE_SETTLS is set, the tls descriptor
  *               is set to tls.
+ * @set_tid:     Pointer to an array of type *pid_t. The size
+ *               of the array is defined using @set_tid_size.
+ *               This array is used to select PIDs/TIDs for
+ *               newly created processes. The first element in
+ *               this defines the PID in the most nested PID
+ *               namespace. Each additional element in the array
+ *               defines the PID in the parent PID namespace of
+ *               the original PID namespace. If the array has
+ *               less entries than the number of currently
+ *               nested PID namespaces only the PIDs in the
+ *               corresponding namespaces are set.
+ * @set_tid_size: This defines the size of the array referenced
+ *               in @set_tid. This cannot be larger than the
+ *               kernel's limit of nested PID namespaces.
+ * @cgroup:       If CLONE_INTO_CGROUP is specified set this to
+ *               a file descriptor for the cgroup.
  *
  * The structure is versioned by size and thus extensible.
  * New struct members must go at the end of the struct and
@@ -72,10 +89,15 @@ struct clone_args {
 	__aligned_u64 stack;
 	__aligned_u64 stack_size;
 	__aligned_u64 tls;
+	__aligned_u64 set_tid;
+	__aligned_u64 set_tid_size;
+	__aligned_u64 cgroup;
 };
 #endif
 
 #define CLONE_ARGS_SIZE_VER0 64 /* sizeof first published struct */
+#define CLONE_ARGS_SIZE_VER1 80 /* sizeof second published struct */
+#define CLONE_ARGS_SIZE_VER2 88 /* sizeof third published struct */
 
 /*
  * Scheduling policies
