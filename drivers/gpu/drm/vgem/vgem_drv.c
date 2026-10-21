@@ -294,7 +294,7 @@ static void vgem_unpin_pages(struct drm_vgem_gem_object *bo)
 static int vgem_prime_pin(struct drm_gem_object *obj)
 {
 	struct drm_vgem_gem_object *bo = to_vgem_bo(obj);
-	long n_pages = obj->size >> PAGE_SHIFT;
+	long n_pages __maybe_unused = obj->size >> PAGE_SHIFT;
 	struct page **pages;
 
 	pages = vgem_pin_pages(bo);
@@ -303,8 +303,14 @@ static int vgem_prime_pin(struct drm_gem_object *obj)
 
 	/* Flush the object from the CPU cache so that importers can rely
 	 * on coherent indirect access via the exported dma-address.
+	 *
+	 * drm_clflush_pages() only does anything on x86 and powerpc; on
+	 * arm64 it just warns, and GKI does not export it to vendor
+	 * modules.  Skip the call where it is a no-op.
 	 */
+#if defined(CONFIG_X86) || defined(__powerpc__)
 	drm_clflush_pages(pages, n_pages);
+#endif
 
 	return 0;
 }

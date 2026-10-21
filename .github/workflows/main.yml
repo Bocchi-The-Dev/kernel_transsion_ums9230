@@ -80,6 +80,21 @@ jobs:
         run: |
           make $MAKE_ARGS -j$(nproc) Image
 
+      # Build every in-tree module that bg6_defconfig selects as =m.  This
+      # includes vgem (CONFIG_DRM_VGEM=m, needed for the Droidspaces-Mali
+      # render node) and the modules that the out-of-tree vendor modules
+      # import.  -k keeps going after a broken optional module; the exit
+      # status is reported but the job continues so the modules that did
+      # build can still be packaged.
+      - name: Build in-tree modules (best effort)
+        run: |
+          set +e
+          make $MAKE_ARGS -k -j$(nproc) modules > /tmp/in-tree-modules.log 2>&1
+          status=$?
+          tail -n 80 /tmp/in-tree-modules.log
+          echo "make modules exited with $status"
+          exit 0
+
       # Mali GPU driver (mali_kbase.ko) is NOT part of the in-tree kernel build:
       # it lives in kernel_modules/.../gpu/natt/mali and is built out-of-tree via
       # its own Makefile against the just-built O=out tree. It carries the GPU
@@ -145,6 +160,14 @@ jobs:
             CONFIG_MALI_GATOR_SUPPORT=n \
             MALI_JIT_PRESSURE_LIMIT_BASE=0
 
+      # Best effort: build the remaining out-of-tree modules from
+      # kernel_modules/ and collect every successful .ko.  The script never
+      # fails the job; see its header for why some modules are expected to
+      # fail on this board.
+      - name: Build vendor modules (best effort)
+        run: |
+          bash .github/scripts/build-vendor-modules.sh
+
       - name: Pack boot.img (magiskboot)
         run: |
           curl -sSL -o /tmp/magisk.apk \
@@ -180,3 +203,10 @@ jobs:
           name: boot-${{ github.sha }}
           path: boot.img
           if-no-files-found: error
+
+      - name: Upload vendor modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendor-modules-${{ github.sha }}
+          path: vendor-modules-artifact
+          if-no-files-found: warn

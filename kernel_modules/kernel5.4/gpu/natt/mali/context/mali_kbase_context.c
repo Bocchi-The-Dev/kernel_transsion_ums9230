@@ -136,6 +136,11 @@ int kbase_context_common_init(struct kbase_context *kctx)
 	atomic_set(&kctx->permanent_mapped_pages, 0);
 	kctx->tgid = current->tgid;
 	kctx->pid = current->pid;
+	/* @tgid is an init-namespace number.  Resolving it with
+	 * find_get_pid() would search the caller's pid namespace instead and
+	 * fail for a process inside a container.  Keep using the values above
+	 * for the process tree; contexts do not need a pid lookup here.
+	 */
 
 	atomic_set(&kctx->used_pages, 0);
 
