@@ -25,6 +25,7 @@
 #include <asm/unistd.h>
 
 #include "internal.h"
+#include "mount.h"
 
 #ifdef CONFIG_KSU_SUSFS
 extern struct static_key_true ksu_is_init_rc_hook_enabled;
@@ -269,6 +270,11 @@ orig_flow:
 		goto out;
 
 	error = vfs_getattr(&path, stat, request_mask, flags);
+	stat->mnt_id = real_mount(path.mnt)->mnt_id;
+	stat->result_mask |= STATX_MNT_ID;
+	if (path.mnt->mnt_root == path.dentry)
+		stat->attributes |= STATX_ATTR_MOUNT_ROOT;
+	stat->attributes_mask |= STATX_ATTR_MOUNT_ROOT;
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	if (stat->result_mask & (STATX_SUS_KSTAT_FUSE | STATX_SUS_KSTAT)) {
 		stat->result_mask &= ~(STATX_SUS_KSTAT_FUSE | STATX_SUS_KSTAT);
@@ -642,6 +648,7 @@ cp_statx(const struct kstat *stat, struct statx __user *buffer)
 	tmp.stx_rdev_minor = MINOR(stat->rdev);
 	tmp.stx_dev_major = MAJOR(stat->dev);
 	tmp.stx_dev_minor = MINOR(stat->dev);
+	tmp.stx_mnt_id = stat->mnt_id;
 
 	return copy_to_user(buffer, &tmp, sizeof(tmp)) ? -EFAULT : 0;
 }
