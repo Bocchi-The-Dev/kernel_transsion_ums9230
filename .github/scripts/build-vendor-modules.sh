@@ -36,11 +36,14 @@ export MAKEFLAGS="-j$jobs"
 # function or a missing type is still an error, so modules that really do not
 # match this kernel keep failing instead of silently producing an unloadable
 # .ko.
+# Keep this list to options understood by the clang version used for the
+# kernel build.  GCC-only diagnostics such as
+# -Wno-error=unused-but-set-variable and -Wno-error=maybe-uninitialized make
+# clang reject every vendor module before it even sees the source.
 export KCFLAGS="${KCFLAGS:-} -Wno-error=misleading-indentation \
 -Wno-error=format -Wno-error=format-extra-args \
 -Wno-error=unused-variable -Wno-error=unused-function \
--Wno-error=unused-but-set-variable -Wno-error=address-of-packed-member \
--Wno-error=maybe-uninitialized -Wno-error=uninitialized"
+-Wno-error=address-of-packed-member -Wno-error=uninitialized"
 
 mkdir -p "$modules_out" "$artifact/logs" "$artifact/ko"
 
