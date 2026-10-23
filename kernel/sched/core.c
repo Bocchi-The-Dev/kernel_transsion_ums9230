@@ -4000,6 +4000,8 @@ void scheduler_tick(void)
 	rq_lock(rq, &rf);
 
 	update_rq_clock(rq);
+	update_thermal_load_avg(rq_clock_thermal(rq), rq,
+				arch_scale_thermal_pressure(cpu_of(rq)));
 	curr->sched_class->task_tick(rq, curr, 0);
 	calc_global_load_tick(rq);
 	psi_task_tick(rq);

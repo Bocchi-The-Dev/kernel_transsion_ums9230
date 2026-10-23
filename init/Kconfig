@@ -521,6 +521,18 @@ config TASK_DELAY_ACCT
 
 	  Say N if unsure.
 
+config SCHED_THERMAL_PRESSURE
+	bool
+	default y if ARM64
+	depends on SMP
+	depends on CPU_THERMAL
+	help
+	  Select this option to enable thermal pressure accounting in the
+	  scheduler. Thermal pressure is the value conveyed to the scheduler
+	  that reflects the reduction in CPU compute capacity resulted from
+	  thermal throttling. Thermal throttling occurs when the performance of
+	  the CPU is reduced due to excessive heat.
+
 config TASK_XACCT
 	bool "Enable extended accounting over taskstats"
 	depends on TASKSTATS

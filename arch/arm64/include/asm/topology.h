@@ -22,6 +22,10 @@ int pcibus_to_node(struct pci_bus *bus);
 /* Replace task scheduler's default max-frequency-invariant accounting */
 #define arch_scale_max_freq_capacity topology_get_max_freq_scale
 
+/* Replace task scheduler's default thermal pressure accounting */
+#define arch_scale_thermal_pressure topology_get_thermal_pressure
+#define arch_set_thermal_pressure topology_set_thermal_pressure
+
 /* Replace task scheduler's default cpu-invariant accounting */
 #define arch_scale_cpu_capacity topology_get_cpu_scale
 

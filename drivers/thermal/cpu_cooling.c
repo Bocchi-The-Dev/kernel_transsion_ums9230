@@ -25,6 +25,7 @@
 #include <linux/cpu.h>
 #include <linux/kallsyms.h>
 #include <linux/cpu_cooling.h>
+#include <linux/sched/topology.h>
 
 #include <trace/events/thermal.h>
 
@@ -340,6 +341,10 @@ static int cpufreq_set_cur_state(struct thermal_cooling_device *cdev,
 {
 	struct cpufreq_cooling_device *cpufreq_cdev = cdev->devdata;
 	int ret;
+#ifdef CONFIG_SCHED_THERMAL_PRESSURE
+	struct cpumask *cpus;
+	unsigned long max_capacity, capacity;
+#endif
 #if defined(CONFIG_SPRD_THERMAL_POLICY) || defined(CONFIG_SPRD_THERMAL_MAX_FREQ_LIMIT)
 	unsigned int freq;
 	int cpu = cpufreq_cdev->policy->cpu;
@@ -364,6 +369,16 @@ static int cpufreq_set_cur_state(struct thermal_cooling_device *cdev,
 			cpufreq_cdev->freq_table[state].frequency);
 	if (ret > 0)
 		cpufreq_cdev->cpufreq_state = state;
+#ifdef CONFIG_SCHED_THERMAL_PRESSURE
+	if (ret >= 0) {
+		cpus = cpufreq_cdev->policy->related_cpus;
+		max_capacity = arch_scale_cpu_capacity(cpumask_first(cpus));
+		capacity = (unsigned long)cpufreq_cdev->freq_table[state].frequency *
+			   max_capacity;
+		capacity /= cpufreq_cdev->policy->cpuinfo.max_freq;
+		arch_set_thermal_pressure(cpus, max_capacity - capacity);
+	}
+#endif
 #ifdef CONFIG_SPRD_THERMAL_POLICY
 	freq = cpufreq_cdev->freq_table[state].frequency;
 	pr_info("cpu%u temp: %d update max_freq to %u\n", cpu, cur_temp, freq);
