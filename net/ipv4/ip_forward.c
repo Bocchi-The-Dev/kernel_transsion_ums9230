@@ -138,12 +138,20 @@ int ip_forward(struct sk_buff *skb)
 	/* We are about to mangle packet. Copy it! */
 	if (skb_cow(skb, LL_RESERVED_SPACE(rt->dst.dev)+rt->dst.header_len))
 		goto drop;
+
 	iph = ip_hdr(skb);
 
-	/* Decrease ttl after skb cow done */
-	ip_decrease_ttl(iph);
+	/*
+	 * Don't decrement the TTL when forwarding out of the cellular
+	 * interface (rmnet* or clat v4-rmnet*), so tethered traffic looks like it came from the phone.
+	 * Every other path still decrements, and the ttl <= 1 check above
+	 * keeps routing loops from living forever.
+	 */
+	if (!strstr(rt->dst.dev->name, "rmnet"))
+		ip_decrease_ttl(iph);
 
 	/*
+	 *
 	 *	We now generate an ICMP HOST REDIRECT giving the route
 	 *	we calculated.
 	 */
