@@ -7223,17 +7223,27 @@ int kswapd_run(int nid)
 		pgdat->kcompress_fifo = NULL;
 		return ret;
 	}
-	pgdat->kcompressd = kthread_create_on_node(kcompressd, pgdat, nid,
-			"kcompressd%d", nid);
-	if (IS_ERR(pgdat->kcompressd)) {
-		pr_err("Failed to start kcompressd on node %d, ret=%ld\n",
-				nid, PTR_ERR(pgdat->kcompressd));
-		pgdat->kcompressd = NULL;
-		kfifo_free((struct kfifo *)pgdat->kcompress_fifo);
-		kfree(pgdat->kcompress_fifo);
-		pgdat->kcompress_fifo = NULL;
-	} else {
-		wake_up_process(pgdat->kcompressd);
+	{
+		/*
+		 * Use a local: assigning the kthread_create_on_node() result to
+		 * pgdat->kcompressd would expose an ERR_PTR to kswapd, which
+		 * treats any non-NULL value as "FIFO is usable".
+		 */
+		struct task_struct *kc;
+
+		kc = kthread_create_on_node(kcompressd, pgdat, nid,
+				"kcompressd%d", nid);
+		if (IS_ERR(kc)) {
+			pr_err("Failed to start kcompressd on node %d, ret=%ld\n",
+					nid, PTR_ERR(kc));
+			kfifo_free((struct kfifo *)pgdat->kcompress_fifo);
+			kfree(pgdat->kcompress_fifo);
+			pgdat->kcompress_fifo = NULL;
+		} else {
+			/* Publish only once the lock and FIFO are set up. */
+			smp_store_release(&pgdat->kcompressd, kc);
+			wake_up_process(kc);
+		}
 	}
 #endif
 	return ret;

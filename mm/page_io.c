@@ -204,6 +204,57 @@ bad_bmap:
 int vm_kcompressd = 64;
 EXPORT_SYMBOL_GPL(vm_kcompressd);
 
+static inline void count_swpout_vm_event(struct page *page);
+
+/*
+ * Write @page to the synchronous swap device WITHOUT taking the page lock.
+ *
+ * A queued page is unlocked and carries a PG_writeback placeholder. Anything
+ * that does lock_page() + wait_on_page_writeback() (MIGRATE_SYNC migration
+ * from CMA/hotplug, swapoff) would wait for kcompressd while kcompressd waits
+ * for the page lock, so the consumer must never block on it.
+ *
+ * This mirrors bdev_write_page() minus set_page_writeback() (already set by
+ * kcompressd_store()) and minus unlock_page() (never taken). On success the
+ * driver's rw_page() has already called end_page_writeback(), with PG_reclaim
+ * still set, so the page is rotated to the LRU tail like any async swap write.
+ */
+static int kcompressd_write(struct page *page)
+{
+	struct swap_info_struct *sis = page_swap_info(page);
+	struct block_device *bdev = sis->bdev;
+	const struct block_device_operations *ops;
+	int ret;
+
+	if (!bdev || !bdev->bd_disk)
+		return -EOPNOTSUPP;
+	ops = bdev->bd_disk->fops;
+	if (!ops->rw_page || bdev_get_integrity(bdev))
+		return -EOPNOTSUPP;
+
+	ret = blk_queue_enter(bdev->bd_queue, 0);
+	if (ret)
+		return ret;
+	ret = ops->rw_page(bdev, swap_page_sector(page) + get_start_sect(bdev),
+			   page, REQ_OP_WRITE);
+	blk_queue_exit(bdev->bd_queue);
+	if (!ret)
+		count_swpout_vm_event(page);
+	return ret;
+}
+
+/* Complete a queued page. Drops the reference taken at queue time. */
+static void kcompressd_flush_page(struct page *page)
+{
+	if (kcompressd_write(page)) {
+		/* Nothing was written: give the page back to reclaim dirty. */
+		set_page_dirty(page);
+		ClearPageReclaim(page);
+		end_page_writeback(page);
+	}
+	put_page(page);
+}
+
 static bool kcompressd_store(struct page *page)
 {
 	pg_data_t *pgdat = NODE_DATA(page_to_nid(page));
@@ -214,80 +265,65 @@ static bool kcompressd_store(struct page *page)
 
 	if (!depth || !current_is_kswapd())
 		return false;
-	if (unlikely(!pgdat->kcompressd))
+	/* Pairs with smp_store_release() in kswapd_run(). */
+	if (unlikely(!smp_load_acquire(&pgdat->kcompressd)))
 		return false;
 	if (!PageAnon(page))
 		return false;
 
 	sis = page_swap_info(page);
-	if (!(sis->flags & SWP_SYNCHRONOUS_IO))
+	if (!(sis->flags & SWP_SYNCHRONOUS_IO) || (sis->flags & SWP_FS))
 		return false;
 
 	if (depth > KCOMPRESS_FIFO_SIZE)
 		depth = KCOMPRESS_FIFO_SIZE;
 
 	/*
-	 * kswapd and kcompressd both touch the FIFO. The full-queue path
-	 * used to pop the head from kswapd, which raced with the consumer.
+	 * PG_writeback must be set before the page becomes visible to
+	 * kcompressd: the consumer ends writeback without taking the page lock.
+	 */
+	get_page(page);
+	set_page_writeback(page);
+
+	/*
+	 * kswapd is the only producer, kcompressd the only other consumer.
+	 * Popping the head here needs the lock to exclude kcompressd.
 	 */
 	spin_lock(&pgdat->kcompress_lock);
 	if (kfifo_len((struct kfifo *)pgdat->kcompress_fifo) >= depth * sizeof(page)) {
-		if (!kfifo_out((struct kfifo *)pgdat->kcompress_fifo, &head, sizeof(page))) {
-			spin_unlock(&pgdat->kcompress_lock);
-			return false;
-		}
+		if (!kfifo_out((struct kfifo *)pgdat->kcompress_fifo, &head, sizeof(page)))
+			head = NULL;
 	}
-
-	get_page(page);
 	ret = kfifo_in((struct kfifo *)pgdat->kcompress_fifo, &page, sizeof(page));
 	spin_unlock(&pgdat->kcompress_lock);
+
 	if (likely(ret == sizeof(page))) {
-		/*
-		 * Mark writeback + unlock so shrink_page_list treats this as
-		 * PAGE_SUCCESS under writeback (page already unlocked).
-		 * kcompressd clears the placeholder before real writeout.
-		 */
-		SetPageWriteback(page);
 		unlock_page(page);
 		wake_up_interruptible(&pgdat->kcompressd_wait);
-	} else {
-		put_page(page);
-		ret = 0;
 	}
 
 	if (head) {
-		struct writeback_control wbc = {
-			.sync_mode = WB_SYNC_NONE,
-			.nr_to_write = SWAP_CLUSTER_MAX,
-			.range_start = 0,
-			.range_end = LLONG_MAX,
-			.for_reclaim = 1,
-		};
-
-		lock_page(head);
-		if (PageWriteback(head))
-			end_page_writeback(head);
-		if (PageSwapCache(head))
-			__swap_writepage(head, &wbc, end_swap_bio_write);
-		else if (PageLocked(head))
-			unlock_page(head);
-		put_page(head);
+		/* FIFO was full: kswapd compresses the oldest page itself. */
+		kcompressd_flush_page(head);
 	}
 
-	return ret == sizeof(page);
+	if (unlikely(ret != sizeof(page))) {
+		/*
+		 * Cannot happen (room was made above and kswapd is the only
+		 * producer). Undo and let the caller write the page normally.
+		 */
+		WARN_ON_ONCE(1);
+		end_page_writeback(page);
+		put_page(page);
+		return false;
+	}
+	return true;
 }
 
 int kcompressd(void *p)
 {
 	pg_data_t *pgdat = p;
 	struct page *page;
-	struct writeback_control wbc = {
-		.sync_mode = WB_SYNC_NONE,
-		.nr_to_write = SWAP_CLUSTER_MAX,
-		.range_start = 0,
-		.range_end = LLONG_MAX,
-		.for_reclaim = 1,
-	};
 
 	current->flags |= PF_MEMALLOC | PF_SWAPWRITE | PF_KSWAPD;
 
@@ -304,14 +340,7 @@ int kcompressd(void *p)
 			}
 			spin_unlock(&pgdat->kcompress_lock);
 
-			lock_page(page);
-			if (PageWriteback(page))
-				end_page_writeback(page);
-			if (PageSwapCache(page))
-				__swap_writepage(page, &wbc, end_swap_bio_write);
-			else if (PageLocked(page))
-				unlock_page(page);
-			put_page(page);
+			kcompressd_flush_page(page);
 		}
 	}
 	return 0;
