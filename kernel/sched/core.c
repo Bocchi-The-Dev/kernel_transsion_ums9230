@@ -762,6 +762,10 @@ int tg_nop(struct task_group *tg, void *data)
 }
 #endif
 
+#ifdef CONFIG_SCHED_BORE
+extern uint sched_bore;
+#endif
+
 static void set_load_weight(struct task_struct *p, bool update_load)
 {
 	int prio = p->static_prio - MAX_RT_PRIO;
@@ -782,6 +786,15 @@ static void set_load_weight(struct task_struct *p, bool update_load)
 	 * weight
 	 */
 	if (update_load && p->sched_class == &fair_sched_class) {
+#ifdef CONFIG_SCHED_BORE
+		/*
+		 * update_burst_score() only reweights when the penalized prio
+		 * changes, so resetting to the bare nice weight here (renice,
+		 * setscheduler) would drop the burst penalty until then.
+		 */
+		if (sched_bore)
+			prio = min(39, prio + (int)p->se.burst_score);
+#endif
 		reweight_task(p, prio);
 	} else {
 		load->weight = scale_load(sched_prio_to_weight[prio]);
@@ -3079,12 +3092,23 @@ void inline sched_fork_bore(struct task_struct *p) {
 }
 
 static void sched_post_fork_bore(struct task_struct *p) {
+	struct task_struct *parent;
+
 	if (!sched_bore)
 		return;
-	if (p->sched_class == &fair_sched_class && p->real_parent) {
-		p->se.prev_burst_penalty = p->real_parent->se.burst_penalty;
+	if (p->sched_class != &fair_sched_class)
+		return;
+	/*
+	 * tasklist_lock is already dropped here, so real_parent can be
+	 * reassigned and freed under us without the RCU read lock.
+	 */
+	rcu_read_lock();
+	parent = rcu_dereference(p->real_parent);
+	if (parent) {
+		p->se.prev_burst_penalty = READ_ONCE(parent->se.burst_penalty);
 		p->se.burst_penalty = p->se.prev_burst_penalty;
 	}
+	rcu_read_unlock();
 }
 #endif // CONFIG_SCHED_BORE
 
