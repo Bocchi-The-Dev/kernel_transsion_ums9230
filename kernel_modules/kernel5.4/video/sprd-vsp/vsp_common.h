@@ -138,6 +138,7 @@ int vsp_get_iova(void *inst_ptr, struct vsp_dev_t *vsp_hw_dev,
 		 struct vsp_iommu_map_data *mapdata, void __user *arg);
 int vsp_free_iova(void *inst_ptr, struct vsp_dev_t *vsp_hw_dev,
 		  struct vsp_iommu_map_data *ummapdata);
+void vsp_free_iova_all(void *inst_ptr, struct vsp_dev_t *vsp_hw_dev);
 int vsp_handle_interrupt(struct vsp_dev_t *vsp_hw_dev, int *status,
 	void __iomem *sprd_vsp_base, void __iomem *vsp_glb_reg_base);
 void vsp_clr_interrupt_mask(struct vsp_dev_t *vsp_hw_dev,

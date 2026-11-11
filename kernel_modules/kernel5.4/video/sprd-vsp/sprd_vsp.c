@@ -649,6 +649,9 @@ static int vsp_release(struct inode *inode, struct file *filp)
 	if (vsp_fp->is_vsp_acquired)
 		up(&vsp_hw_dev.vsp_mutex);
 
+	/* the client may exit without freeing the iovas it mapped */
+	vsp_free_iova_all(vsp_fp, &vsp_hw_dev);
+
 	pm_runtime_mark_last_busy(vsp_hw_dev.vsp_dev);
 	if (vsp_hw_dev.version == PIKE2)
 		sprd_glb_mm_pw_off_cfg();

@@ -83,8 +83,12 @@ int vsp_get_dmabuf(int fd, struct dma_buf **dmabuf, void **buf, size_t *size)
 			pr_err("%s, dmabuf error: %p !\n", __func__, *dmabuf);
 			return PTR_ERR(*dmabuf);
 		}
+		/*
+		 * Keep the reference taken above: it is transferred to the caller
+		 * and then to the map entry, so the buffer cannot be freed while
+		 * it is still attached and mapped into the vsp iommu.
+		 */
 		buffer = (*dmabuf)->priv;
-		dma_buf_put(*dmabuf);
 	} else {
 		buffer = (*dmabuf)->priv;
 	}
@@ -235,6 +239,7 @@ err_iommu_map:
 err_map_attachment:
 	dma_buf_detach(dmabuf, attachment);
 err_attach:
+	dma_buf_put(dmabuf);
 err_get_dmabuf:
 	vsp_clk_disable(vsp_hw_dev);
 
@@ -290,10 +295,58 @@ int vsp_free_iova(void *inst_ptr, struct vsp_dev_t *vsp_hw_dev,
 		ummapdata->iova_addr, ummapdata->size);
 	dma_buf_unmap_attachment(entry->attachment, entry->table, DMA_BIDIRECTIONAL);
 	dma_buf_detach(entry->dmabuf, entry->attachment);
+	dma_buf_put(entry->dmabuf);
 	kfree(entry);
 
 	vsp_clk_disable(vsp_hw_dev);
 	return ret;
+}
+
+/*
+ * Drop every mapping still owned by @inst_ptr.  A client is allowed to close
+ * the node without freeing the iovas it got from VSP_GET_IOVA, and keeping
+ * those entries around left the buffer attached and mapped after it was
+ * freed: dma_buf_release() then warns about the stale attachment and the
+ * iova is leaked for the rest of the boot.
+ */
+void vsp_free_iova_all(void *inst_ptr, struct vsp_dev_t *vsp_hw_dev)
+{
+	struct sprd_iommu_unmap_data iommu_ummap_data = {0};
+	struct vsp_iommu_map_entry *entry, *tmp;
+	LIST_HEAD(pending);
+
+	mutex_lock(&vsp_hw_dev->map_lock);
+	list_for_each_entry_safe(entry, tmp, &vsp_hw_dev->map_list, list) {
+		if (entry->inst_ptr == inst_ptr)
+			list_move(&entry->list, &pending);
+	}
+	mutex_unlock(&vsp_hw_dev->map_lock);
+
+	if (list_empty(&pending))
+		return;
+
+	vsp_clk_enable(vsp_hw_dev);
+	vsp_check_pw_status(vsp_hw_dev);
+
+	list_for_each_entry_safe(entry, tmp, &pending, list) {
+		list_del(&entry->list);
+
+		iommu_ummap_data.iova_addr = entry->iova_addr;
+		iommu_ummap_data.iova_size = entry->iova_size;
+		iommu_ummap_data.ch_type = SPRD_IOMMU_FM_CH_RW;
+		iommu_ummap_data.buf = NULL;
+		if (sprd_iommu_unmap(vsp_hw_dev->vsp_dev, &iommu_ummap_data))
+			pr_err("sprd_iommu_unmap failed: iova_addr=%#lx, size=%zu\n",
+			       entry->iova_addr, entry->iova_size);
+
+		dma_buf_unmap_attachment(entry->attachment, entry->table,
+					 DMA_BIDIRECTIONAL);
+		dma_buf_detach(entry->dmabuf, entry->attachment);
+		dma_buf_put(entry->dmabuf);
+		kfree(entry);
+	}
+
+	vsp_clk_disable(vsp_hw_dev);
 }
 
 int vsp_get_mm_clk(struct vsp_dev_t *vsp_hw_dev)
