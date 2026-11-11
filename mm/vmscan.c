@@ -4552,6 +4552,10 @@ static bool isolate_page(struct lruvec *lruvec, struct page *page, struct scan_c
 	    (PageDirty(page) || (PageAnon(page) && !PageSwapCache(page))))
 		return false;
 
+	/* CMA pages are of no use to this allocation context, see skip_cma() */
+	if (skip_cma(page, sc))
+		return false;
+
 	if (!get_page_unless_zero(page))
 		return false;
 
