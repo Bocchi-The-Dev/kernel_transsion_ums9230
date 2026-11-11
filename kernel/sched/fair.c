@@ -8496,6 +8496,15 @@ static void update_cpu_capacity(struct sched_domain *sd, int cpu)
 	raw_spin_unlock_irqrestore(&mcc->lock, flags);
 
 skip_unlock: __attribute__ ((unused));
+	/*
+	 * Thermal capping of the max frequency is NOT subtracted here.
+	 * cpufreq_set_policy() already calls arch_set_max_freq_scale() with the
+	 * capped policy->max, so the arch_scale_max_freq_capacity() factor above
+	 * has removed that capacity. Subtracting arch_scale_thermal_pressure()
+	 * as well would count the same cap twice: capacity C at a cap of s of
+	 * max frequency would become C * (2s - 1) instead of C * s, and 1 once
+	 * the cap is at or below half of max frequency.
+	 */
 	capacity = scale_rt_capacity(cpu, capacity);
 
 	if (!capacity)
