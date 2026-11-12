@@ -3,6 +3,8 @@
 
 #include <linux/bits.h>
 #include <linux/bitmap.h>
+#include <linux/cred.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 
 /********/

@@ -24,7 +24,9 @@
 #include <linux/bitmap.h>
 #include <linux/limits.h>
 #include <linux/rcupdate.h>
+#include <linux/srcu.h>
 #include <linux/string.h>
+#include <linux/utsname.h>
 #include <linux/hash.h>
 #include <linux/susfs.h>
 #include "fuse/fuse_i.h"
