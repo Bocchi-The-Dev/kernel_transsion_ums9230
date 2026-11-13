@@ -104,6 +104,36 @@ jobs:
           path: out/arch/arm64/boot/Image
           if-no-files-found: error
 
+      # The sprd Makefile is gated on the vendor build system's variables --
+      # without BSP_BUILD_DT_OVERLAY/BSP_BUILD_ANDROID_OS every dtb-* line is
+      # skipped and `make dtbs` produces nothing.  qogirl6 is the UMS9230
+      # family, and ums9230-1h10_go is the X6525 board (the live device tree is
+      # "sprd,ums9230-1h10-go"), so this proves the dts port as well as being
+      # the base for a 5.15 dtbo image later.  Kept non-fatal: the stock dtbo
+      # partition already carries this board's DTB, so a dts failure must not
+      # block boot.img.
+      - name: Build device trees (ums9230-1h10-go)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          make $MAKE_ARGS -j$(nproc) \
+            BSP_BUILD_DT_OVERLAY=y BSP_BUILD_ANDROID_OS=y BSP_BUILD_FAMILY=qogirl6 \
+            dtbs 2>&1 | tee /tmp/dtbs.log | tail -60
+          find out/arch/arm64/boot/dts/sprd -maxdepth 1 \
+            \( -name '*.dtb' -o -name '*.dtbo' \) -printf '%f %s\n' | sort | head -30
+
+      - name: Upload device trees
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtbs-5.15-${{ github.sha }}
+          path: |
+            out/arch/arm64/boot/dts/sprd/*.dtb
+            out/arch/arm64/boot/dts/sprd/*.dtbo
+            /tmp/dtbs.log
+          if-no-files-found: warn
+
       # boot-gsi.img is the stock X6525 boot image (header v4, 1.5 MB ramdisk,
       # the "androidboot.verifiedbootstate=disabled buildvariant=userdebug
       # androidboot.selinux=permissive kvm-arm.mode=nvhe" cmdline) whose kernel
