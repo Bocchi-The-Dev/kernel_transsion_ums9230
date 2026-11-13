@@ -4956,7 +4956,9 @@ CONFIG_SPRD_TIME_SYNC_CP=m
 # end of Xilinx SoC drivers
 
 CONFIG_OPLUS_FEATURE_PHOENIX=y
-CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE=m
+# PORT(5.15): hung_task_enhance.ko imports get_eng_version() from the oplus
+# system tree, which is part of the unported external vendor/oplus sources.
+# CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE=m
 CONFIG_OPLUS_FEATURE_DEATH_HEALER=m
 # end of SOC (System On Chip) specific Drivers
 

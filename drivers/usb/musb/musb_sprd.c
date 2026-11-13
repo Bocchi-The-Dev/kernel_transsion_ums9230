@@ -1663,6 +1663,12 @@ static void musb_sprd_chg_detect_work(struct work_struct *work)
 		}
 		glue->chg_state = USB_CHG_STATE_DETECTED;
 #endif
+		/* oplus path: these two helpers live in the oplus charging stack.
+		 * The block lost its #ifdef when the non-oplus path above got its
+		 * own, so it was compiled unconditionally and musb_sprd.ko failed
+		 * modpost while the framework is off.
+		 */
+#ifdef OPLUS_FEATURE_CHG_BASIC
         glue->chg_type = oplus_get_charger_type_sprd();
 
         if (!glue->vbus_active) {
@@ -1679,6 +1685,7 @@ static void musb_sprd_chg_detect_work(struct work_struct *work)
             break;
         }
         glue->chg_state = USB_CHG_STATE_DETECTED;
+#endif
 		fallthrough;
 	case USB_CHG_STATE_DETECTED:
 		dev_info(glue->dev, "charger = %d\n", glue->chg_type);
