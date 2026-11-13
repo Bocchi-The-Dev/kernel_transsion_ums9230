@@ -102,6 +102,9 @@ jobs:
         if: always()
         with:
           name: config-5.15-${{ github.sha }}
+          # upload-artifact@v4 drops dotfiles unless asked; without this the
+          # artifact only ever contains the configure log.
+          include-hidden-files: true
           path: |
             out/.config
             /tmp/config.log
