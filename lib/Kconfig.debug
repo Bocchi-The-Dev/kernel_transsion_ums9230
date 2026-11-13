@@ -1161,7 +1161,11 @@ config BOOTPARAM_HUNG_TASK_PANIC
 
 config BOOTPARAM_HUNG_TASK_PANIC_VALUE
 	int
-	depends on DETECT_HUNG_TASK
+# 5.4 tree kept this symbol available regardless of DETECT_HUNG_TASK: vendor
+# kernel/Makefile builds hung_task.o unconditionally (obj-y) and it assigns
+# sysctl_hung_task_panic from this value, so with the dependency active the
+# macro is undefined and the build breaks.
+#	depends on DETECT_HUNG_TASK
 	range 0 1
 	default 0 if !BOOTPARAM_HUNG_TASK_PANIC
 	default 1 if BOOTPARAM_HUNG_TASK_PANIC
