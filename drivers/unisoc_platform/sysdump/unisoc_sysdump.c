@@ -656,6 +656,16 @@ static unsigned long get_sprd_sysdump_info_paddr(void)
 
 	node = of_find_node_by_name(NULL, SPRD_SYSDUMP_RESERVED);
 	if (!node) {
+		/* The stock X6525 boot chain (5.4 vendor_boot DTB + dtbo) still
+		 * names this region the 5.4 way: "sprd-sysdump".  Without a match
+		 * there is no panic notifier, so LK never gets a minidump to
+		 * write into sysdumpdb.
+		 */
+		node = of_find_node_by_name(NULL, "sprd-sysdump");
+		if (node)
+			pr_info("using legacy sprd-sysdump reserved memory node\n");
+	}
+	if (!node) {
 		pr_err("Not find %s node from dts, use RAMDISK addr when panic\n",
 				SPRD_SYSDUMP_RESERVED);
 		sysdump_re_paddr = 0;

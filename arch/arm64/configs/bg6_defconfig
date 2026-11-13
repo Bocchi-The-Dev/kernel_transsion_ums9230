@@ -463,7 +463,13 @@ CONFIG_RANDOMIZE_BASE=y
 #
 CONFIG_BUILD_ARM64_DTC=""
 CONFIG_BUILD_ARM64_DTC_FLAGS="-@"
-CONFIG_CMDLINE=""
+# PORT(5.15) DEBUG: the X6525 LK passes bootargs from the stock 5.4 dtbo, and
+# the only console there is ttyS1 (no UART attached), so a 5.15 kernel that
+# panics early looks exactly like a hang.  Append a panic timeout so the SoC
+# resets and LK writes its minidump into sysdumpdb, which we can pull.  Also
+# keep full loglevel since nothing is rate-limited to the UART anyway.
+CONFIG_CMDLINE="panic=5 oops=panic panic_on_oops=1 loglevel=8 ignore_loglevel"
+CONFIG_CMDLINE_EXTEND=y
 CONFIG_EFI_STUB=y
 CONFIG_EFI=y
 # CONFIG_DMI is not set
