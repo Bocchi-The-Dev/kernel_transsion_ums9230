@@ -1077,10 +1077,16 @@ struct task_struct {
 	struct sysv_sem			sysvsem;
 	struct sysv_shm			sysvshm;
 #endif
-#ifdef CONFIG_DETECT_HUNG_TASK
+	/*
+	 * Vendor code in copy_mm() ("struk to reboot" workaround) initialises
+	 * these unconditionally, exactly as the 5.4 tree did where they lived in
+	 * an unconditional KABI slot.  Keep them unconditional so the tree still
+	 * builds with CONFIG_DETECT_HUNG_TASK off, which is how bg6_defconfig is
+	 * configured; hung_task.c and the oplus hung_task_enhance module are the
+	 * only users and they are compiled out with it.
+	 */
 	unsigned long			last_switch_count;
 	unsigned long			last_switch_time;
-#endif
 	/* Filesystem information: */
 	struct fs_struct		*fs;
 

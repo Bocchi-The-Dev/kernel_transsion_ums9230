@@ -5268,7 +5268,10 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	unsigned int cpuset_mems_cookie;
 	unsigned int zonelist_iter_cookie;
 	int reserve_flags;
+#if defined(CONFIG_HYBRIDSWAP) || \
+	(defined(CONFIG_OPLUS_MEM_MONITOR) && defined(CONFIG_OPLUS_HEALTHINFO))
 	unsigned long alloc_start = jiffies;
+#endif
 	bool should_alloc_retry = false;
 	/*
 	 * We also sanity check to catch abuse of atomic reserves being used by

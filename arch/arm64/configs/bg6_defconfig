@@ -2805,7 +2805,11 @@ CONFIG_FUEL_GAUGE_SC27XX=m
 # CONFIG_WIRELESS_CHARGE_PUMPS_CONVERTER_HL1506 is not set
 # CONFIG_OPLUS_CHG_V2 is not set
 CONFIG_OPLUS_CHG=m
-CONFIG_OPLUS_CHARGER=y
+# PORT(5.15): drivers/power/oplus is a dangling symlink to realme's external
+# vendor/oplus/kernel/charger tree, which is not part of this source drop.
+# bg6's in-tree charger driver still has to be ported, so the framework is off
+# for now; flip this back on once drivers/power/oplus holds real sources.
+# CONFIG_OPLUS_CHARGER is not set
 # CONFIG_OPLUS_CHARGER_MTK is not set
 CONFIG_OPLUS_CHARGER_UNISOC=y
 # CONFIG_OPLUS_CHARGER_MTK_CHGIC is not set
@@ -6302,7 +6306,7 @@ CONFIG_HAVE_ARCH_KASAN_SW_TAGS=y
 CONFIG_CC_HAS_KASAN_GENERIC=y
 CONFIG_CC_HAS_KASAN_SW_TAGS=y
 # CONFIG_KASAN is not set
-CONFIG_KASAN_STACK=0
+# CONFIG_KASAN_STACK is not set
 CONFIG_HAVE_ARCH_KFENCE=y
 CONFIG_KFENCE=y
 CONFIG_KFENCE_STATIC_KEYS=y
