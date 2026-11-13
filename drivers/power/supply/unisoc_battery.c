@@ -287,7 +287,8 @@ EXPORT_SYMBOL_GPL(fgauge_get_profile_id);
 #define OPLUS_BATON_NTC_01 10
 #endif
 
-static int gauge_get_property(enum power_supply_property psp, int *temp)
+/* Only the oplus gauge_operations callbacks below use these helpers. */
+static int __maybe_unused gauge_get_property(enum power_supply_property psp, int *temp)
 {
 	struct power_supply *fuel_gauge;
 	int ret;

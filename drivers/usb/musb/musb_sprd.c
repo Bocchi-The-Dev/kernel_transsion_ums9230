@@ -1716,7 +1716,7 @@ static void musb_sprd_chg_detect_work(struct work_struct *work)
 #ifndef OPLUS_FEATURE_CHG_BASIC
 	case USB_CHG_STATE_RETRY_DETECT:
 		if (extcon_get_state(glue->edev, EXTCON_USB))
-			glue->chg_type = musb_sprd_retry_charger_detect(glue);
+			glue->chg_type = (enum power_supply_type)musb_sprd_retry_charger_detect(glue);
 
 		glue->chg_state = USB_CHG_STATE_RETRY_DETECTED;
 		fallthrough;
