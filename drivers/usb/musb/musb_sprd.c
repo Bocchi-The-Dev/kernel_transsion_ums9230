@@ -998,7 +998,7 @@ musb_sprd_retry_charger_detect(struct sprd_glue *glue)
 	unsigned long flags;
 	u8 pwr;
 
-	glue->chg_type = UNKNOWN_TYPE;
+	glue->chg_type = (enum power_supply_type)UNKNOWN_TYPE;
 	dev_info(glue->dev, "%s enter\n", __func__);
 	spin_lock_irqsave(&glue->lock, flags);
 	glue->retry_charger_detect = true;
@@ -1015,7 +1015,7 @@ musb_sprd_retry_charger_detect(struct sprd_glue *glue)
 
 	/* because of GKI1.0, retry_charger_detect is intead of below */
 	usb_phy->flags |= CHARGER_2NDDETECT_SELECT;
-	glue->chg_type = usb_phy->charger_detect(glue->xceiv);
+	glue->chg_type = (enum power_supply_type)usb_phy->charger_detect(glue->xceiv);
 	usb_phy->flags &= ~CHARGER_2NDDETECT_SELECT;
 
 	pwr = musb_readb(musb->mregs, MUSB_POWER);
@@ -1031,7 +1031,7 @@ musb_sprd_retry_charger_detect(struct sprd_glue *glue)
 	pm_runtime_mark_last_busy(glue->dev);
 	pm_runtime_put_autosuspend(glue->dev);
 
-	return glue->chg_type;
+	return (enum usb_charger_type)glue->chg_type;
 }
 #endif
 static void musb_sprd_charger_mode(void)
@@ -1621,6 +1621,12 @@ static void musb_sprd_chg_detect_work(struct work_struct *work)
 	struct sprd_glue *glue = container_of(work, struct sprd_glue, chg_detect_work.work);
 	unsigned long delay = 0;
 	bool rework = false;
+	/* The non-oplus charger detection below uses it; the oplus path takes
+	 * glue->chg_type from oplus_get_charger_type_sprd() instead, which is why
+	 * the declaration used to live in the oplus-only block and left this
+	 * path uncompilable.
+	 */
+	struct usb_phy *usb_phy = glue->xceiv;
 
 	if (!glue->vbus_active) {
 		dev_info(glue->dev, "musb:line%d: vbus_active 0\n", __LINE__);
@@ -1640,7 +1646,7 @@ static void musb_sprd_chg_detect_work(struct work_struct *work)
 	case USB_CHG_STATE_DETECT:
 #ifndef OPLUS_FEATURE_CHG_BASIC
 		if (usb_phy->charger_detect)
-			glue->chg_type = usb_phy->charger_detect(usb_phy);
+			glue->chg_type = (enum power_supply_type)usb_phy->charger_detect(usb_phy);
 
 		if (!glue->vbus_active) {
 			dev_info(glue->dev, "musb:line%d: vbus_active 0\n", __LINE__);

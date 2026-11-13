@@ -675,7 +675,9 @@ int battery_init(struct platform_device *pdev)
 		chip->gauge_init_completed = true;
 	}
 #endif
+#ifdef OPLUS_FEATURE_CHG_BASIC
 	first_get_ui_soc = true;
+#endif
 
 	return 0;
 }

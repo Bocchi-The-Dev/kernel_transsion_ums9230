@@ -1721,7 +1721,10 @@ static void sprd_fgu_uusoc_algo(struct sprd_fgu_data *data, int *uusoc_mah)
 }
 #endif
 
-static int data_average_method(int data)
+/* Only reached from the oplus charging path, which the 5.15 tree compiles out
+ * while CONFIG_OPLUS_CHARGER is off.
+ */
+static int __maybe_unused data_average_method(int data)
 {
 	int avgdata;//,i;
 	static int sum = 0,Index=0,flag=0;
