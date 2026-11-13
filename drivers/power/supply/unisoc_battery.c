@@ -34,7 +34,14 @@
 #include <linux/hardware_info.h>
 #include <linux/power/charger-manager.h>
 
+/* The oplus gauge glue below talks to drivers/power/oplus/v1, which in this
+ * 5.15 drop is a dangling symlink into realme's out-of-tree vendor/oplus.
+ * Keep it behind CONFIG_OPLUS_CHARGER so the sc27xx fuel gauge still builds
+ * (and reports battery through its own power_supply) while that is unported.
+ */
+#ifdef CONFIG_OPLUS_CHARGER
 #define OPLUS_FEATURE_CHG_BASIC 1
+#endif
 struct sprd_fgu_data *gauge_data;
 
 #ifdef OPLUS_FEATURE_CHG_BASIC

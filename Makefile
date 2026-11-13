@@ -1179,9 +1179,16 @@ export INSTALL_DTBS_PATH ?= $(INSTALL_PATH)/dtbs/$(KERNELRELEASE)
 MODLIB	= $(INSTALL_MOD_PATH)/lib/modules/$(KERNELRELEASE)
 export MODLIB
 
-#ifdef OPLUS_FEATURE_CHG_BASIC
+# The vendor build force-defined OPLUS_FEATURE_CHG_BASIC for every object via
+# "#ifdef ... / #endif" lines, which make reads as comments -- so the -D was
+# unconditional.  That selects the oplus charging/gauge API everywhere
+# (sprd_battery_info's 2-arg get_battery_info, the oplus headers the fuel
+# gauge includes, ...), which only exists together with drivers/power/oplus.
+# bg6 has to run with the framework off until that source is ported, so tie the
+# define to the option instead of always-on.
+ifdef CONFIG_OPLUS_CHARGER
 KBUILD_CFLAGS += -DOPLUS_FEATURE_CHG_BASIC
-#endif
+endif
 
 PHONY += prepare0
 
