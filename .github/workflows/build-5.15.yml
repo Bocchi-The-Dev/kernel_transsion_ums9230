@@ -1,0 +1,95 @@
+name: Build Kernel 5.15 (X6525)
+
+# First milestone of the 5.4.302 -> 5.15.178 port.
+#
+# This branch is based on realme's android_kernel_realme_ums9230
+# (realme/ums9230_v_15.0, 5.15.178), which is the only public tree carrying
+# the qogirl6 (UMS9230) BSP newer than 5.4 -- no android12-5.10 qogirl6
+# vendor tree exists.  The Infinix X6525 is handled by bg6_defconfig, the
+# same config the 5.4 branch's CI builds.
+#
+# Scope of this workflow: prove that the vendor's 5.4 config can configure
+# and build an arm64 Image on 5.15.  It deliberately does not package a
+# boot.img or build vendor modules yet:
+#   * this tree has no boot-gsi.img to repack against
+#   * the X6525 vendor modules (touch, fingerprint, charger, camera, mali)
+#     live in kernel_modules/kernel5.4 on the 5.4 branch and have no 5.15
+#     counterpart here; realme ships theirs in the separate
+#     android_kernel_modules_and_devicetree_realme_ums9230 repo.
+#
+# The config is the unmodified 5.4 bg6_defconfig on purpose: kconfig drops
+# the symbols that no longer exist and takes 5.15 defaults for new ones, so
+# the resulting .config/comparison shows exactly what needs porting instead
+# of hiding it behind a hand-written fragment.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ upstream-5.15, upstream-5.10 ]
+
+jobs:
+  build:
+    runs-on: namespace-profile-compile
+    env:
+      CLANG_DIR: /tmp/clang-r416183b
+      # Same toolchain and triple handling as the 5.4 workflow:
+      # CROSS_COMPILE is what supplies clang's aarch64 target triple.
+      MAKE_ARGS: LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flex bison bc cpio libssl-dev xz-utils dwarves \
+            libc6-dev-arm64-cross
+
+      - name: Fetch the reference toolchain (clang-r416183b)
+        run: |
+          curl -sSL -o /tmp/clang.tar.gz \
+            https://codeload.github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b/tar.gz/refs/heads/lineage-20.0
+          mkdir -p "$CLANG_DIR"
+          tar xzf /tmp/clang.tar.gz -C "$CLANG_DIR" --strip-components=1
+          echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: |
+          clang --version
+          ld.lld --version
+          llvm-ar --version | head -1
+
+      - name: Configure (bg6_defconfig)
+        run: |
+          set -o pipefail
+          make $MAKE_ARGS bg6_defconfig 2>&1 | tee /tmp/config.log
+          echo "kernelrelease: $(make $MAKE_ARGS -s kernelrelease)"
+
+      # Options that no longer exist in 5.15, or whose dependencies moved,
+      # show up here.  This is the list to start the config port from.
+      - name: Report config warnings
+        if: always()
+        run: |
+          grep -iE '^\S*warning' /tmp/config.log | sort -u | head -200 || true
+
+      - name: Build Image
+        run: |
+          set -o pipefail
+          make $MAKE_ARGS -j$(nproc) Image 2>&1 | tee /tmp/build.log
+
+      - name: Upload Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-Image-5.15-${{ github.sha }}
+          path: out/arch/arm64/boot/Image
+          if-no-files-found: error
+
+      - name: Upload .config and configure log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: config-5.15-${{ github.sha }}
+          path: |
+            out/.config
+            /tmp/config.log
+          if-no-files-found: warn
