@@ -42,8 +42,21 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y flex bison bc cpio libssl-dev xz-utils dwarves \
+          # Compared with the 5.4 workflow this adds the host tooling that 5.15
+          # needs and 5.4 did not:
+          #   libelf-dev  - resolve_btfids/libbpf (CONFIG_DEBUG_INFO_BTF) build
+          #                 the host tools from source here and fail without it
+          #   zstd, lz4   - compression for initramfs/modules
+          #   device-tree-compiler - dtb/dto builds (5.15 builds them separately)
+          #   kmod        - depmod when modules are installed
+          sudo apt-get install -y flex bison bc cpio libssl-dev libelf-dev \
+            xz-utils zstd lz4 dwarves device-tree-compiler kmod \
             libc6-dev-arm64-cross
+
+      - name: Verify host tools
+        run: |
+          test -f /usr/include/libelf.h && test -f /usr/include/gelf.h
+          pahole --version
 
       - name: Fetch the reference toolchain (clang-r416183b)
         run: |
