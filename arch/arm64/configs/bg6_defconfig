@@ -4921,7 +4921,12 @@ CONFIG_UNISOC_SIPC_MEM_CACHE_EN=y
 CONFIG_SPRD_SIPC_WCN=y
 # end of SPRD SIPC modules
 
-CONFIG_SPRD_MODEM_POWER_MANAGER=m
+# PORT(5.15): 5.15 gates the whole drivers/unisoc_platform/modem subtree
+# behind UNISOC_MODEM (5.4 had no such parent).  Without it the mailbox, sipc
+# and modem_loader directories are never entered, so sipc-core.ko -- which
+# exports the sbuf_*/sblock_* symbols wcn_bsp.ko imports -- is not built.
+CONFIG_UNISOC_MODEM=m
+CONFIG_UNISOC_MODEM_POWER_MANAGER=m
 
 #
 # SFP modules
