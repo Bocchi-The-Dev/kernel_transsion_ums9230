@@ -2185,6 +2185,15 @@ config CMDLINE_FORCE
 
 endchoice
 
+config SPRD_BRINGUP_LOGMIRROR
+	bool "Mirror console output into a DRAM window for bring-up"
+	help
+	  Copies everything written to the console into a fixed DRAM window
+	  (0x9f800000, 1 MiB) once the linear mapping is up, so early boot
+	  output can be recovered from a hung device with a download-mode
+	  memory read.  Development aid for the UMS9230 5.15 port; says yes
+	  only while the console is a UART with nothing attached.
+
 config EFI_STUB
 	bool
 

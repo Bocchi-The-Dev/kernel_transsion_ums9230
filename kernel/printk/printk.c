@@ -1934,6 +1934,47 @@ static int console_trylock_spinning(void)
  * log_buf[start] to log_buf[end - 1].
  * The console_lock must be held.
  */
+#ifdef CONFIG_SPRD_BRINGUP_LOGMIRROR
+/*
+ * Bring-up aid for the X6525 5.15 port: the stock boot chain only gives the
+ * kernel a console wired to ttyS1, and nothing is attached there, so an early
+ * hang leaves no trace behind.  Mirror every console line into an otherwise
+ * unused DRAM window so it can still be recovered with the SPD tool's
+ * read_mem while the device sits frozen at the logo.
+ *
+ * Enabled from paging_init(), as soon as the linear mapping covers it.
+ */
+#define SPRD_LM_PHYS	0x9f800000UL
+#define SPRD_LM_SIZE	0x00100000UL
+
+static bool sprd_lm_ready;
+static unsigned long sprd_lm_off;
+
+void __init sprd_log_mirror_enable(void)
+{
+	sprd_lm_ready = true;
+}
+
+static void sprd_log_mirror(const char *text, size_t len)
+{
+	char *buf;
+	size_t room, n;
+
+	if (!sprd_lm_ready || !text || !len)
+		return;
+
+	buf = (char *)__va(SPRD_LM_PHYS);
+	if (sprd_lm_off >= SPRD_LM_SIZE - 1)
+		sprd_lm_off = 0;
+
+	room = SPRD_LM_SIZE - 1 - sprd_lm_off;
+	n = min(len, room);
+	memcpy(buf + sprd_lm_off, text, n);
+	sprd_lm_off += n;
+	buf[sprd_lm_off] = '\0';
+}
+#endif
+
 static void call_console_drivers(const char *ext_text, size_t ext_len,
 				 const char *text, size_t len)
 {
@@ -1942,6 +1983,10 @@ static void call_console_drivers(const char *ext_text, size_t ext_len,
 	struct console *con;
 
 	trace_console_rcuidle(text, len);
+
+#ifdef CONFIG_SPRD_BRINGUP_LOGMIRROR
+	sprd_log_mirror(text, len);
+#endif
 
 	if (!console_drivers)
 		return;

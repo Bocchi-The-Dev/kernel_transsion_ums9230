@@ -772,6 +772,10 @@ static void __init map_kernel(pgd_t *pgdp)
 	kasan_copy_shadow(pgdp);
 }
 
+#ifdef CONFIG_SPRD_BRINGUP_LOGMIRROR
+extern void sprd_log_mirror_enable(void);
+#endif
+
 void __init paging_init(void)
 {
 	pgd_t *pgdp = pgd_set_fixmap(__pa_symbol(swapper_pg_dir));
@@ -788,6 +792,11 @@ void __init paging_init(void)
 		      __pa_symbol(init_pg_end) - __pa_symbol(init_pg_dir));
 
 	memblock_allow_resize();
+
+#ifdef CONFIG_SPRD_BRINGUP_LOGMIRROR
+	sprd_log_mirror_enable();
+	pr_info("SPRD-LM: linear map up, console mirrored to 0x9f800000\n");
+#endif
 }
 
 /*

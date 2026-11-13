@@ -470,6 +470,9 @@ CONFIG_BUILD_ARM64_DTC_FLAGS="-@"
 # keep full loglevel since nothing is rate-limited to the UART anyway.
 CONFIG_CMDLINE="panic=5 oops=panic panic_on_oops=1 loglevel=8 ignore_loglevel"
 CONFIG_CMDLINE_EXTEND=y
+# PORT(5.15) DEBUG: keep a copy of the console in DRAM (0x9f800000) so a hang
+# before userspace can be read back with the SPD tool instead of a UART stub.
+CONFIG_SPRD_BRINGUP_LOGMIRROR=y
 CONFIG_EFI_STUB=y
 CONFIG_EFI=y
 # CONFIG_DMI is not set
