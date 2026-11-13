@@ -104,6 +104,36 @@ jobs:
           path: out/arch/arm64/boot/Image
           if-no-files-found: error
 
+      # bg6_defconfig has plenty of =m drivers (ZRAM, several SPRD blocks).
+      # They are the next thing a boot needs, and building them exercises far
+      # more of the 5.15 port than Image does.  -k keeps going after a broken
+      # optional module and the status is only reported, like the 5.4 pipeline.
+      - name: Build in-tree modules (best effort)
+        run: |
+          set +e
+          make $MAKE_ARGS -k -j$(nproc) modules > /tmp/modules.log 2>&1
+          status=$?
+          grep -E 'error:|Error [0-9]' /tmp/modules.log | head -40
+          tail -n 40 /tmp/modules.log
+          echo "make modules exited with $status"
+          if [ $status -eq 0 ]; then
+            make $MAKE_ARGS INSTALL_MOD_PATH=$PWD/modinstall modules_install \
+              >> /tmp/modules.log 2>&1
+            find modinstall -name '*.ko' -printf '%f\n' | sort | head -40
+            echo "module count: $(find modinstall -name '*.ko' | wc -l)"
+          fi
+          exit 0
+
+      - name: Upload in-tree modules
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modules-5.15-${{ github.sha }}
+          path: |
+            modinstall/lib/modules/*
+            /tmp/modules.log
+          if-no-files-found: warn
+
       # The sprd Makefile is gated on the vendor build system's variables --
       # without BSP_BUILD_DT_OVERLAY/BSP_BUILD_ANDROID_OS every dtb-* line is
       # skipped and `make dtbs` produces nothing.  qogirl6 is the UMS9230
