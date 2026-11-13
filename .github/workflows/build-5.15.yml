@@ -8,14 +8,19 @@ name: Build Kernel 5.15 (X6525)
 # vendor tree exists.  The Infinix X6525 is handled by bg6_defconfig, the
 # same config the 5.4 branch's CI builds.
 #
-# Scope of this workflow: prove that the vendor's 5.4 config can configure
-# and build an arm64 Image on 5.15.  It deliberately does not package a
-# boot.img or build vendor modules yet:
-#   * this tree has no boot-gsi.img to repack against
-#   * the X6525 vendor modules (touch, fingerprint, charger, camera, mali)
-#     live in kernel_modules/kernel5.4 on the 5.4 branch and have no 5.15
-#     counterpart here; realme ships theirs in the separate
-#     android_kernel_modules_and_devicetree_realme_ums9230 repo.
+# Scope of this workflow: build an arm64 Image on 5.15 and repack it into a
+# flashable boot.img using the stock X6525 ramdisk (boot-gsi.img, carried over
+# from the 5.4 branch).  It does not build vendor modules yet: the X6525
+# modules (touch, fingerprint, charger, camera, mali) live in
+# kernel_modules/kernel5.4 on the 5.4 branch and have no 5.15 counterpart here;
+# realme ships theirs in the separate
+# android_kernel_modules_and_devicetree_realme_ums9230 repo.
+#
+# The board's live device tree is sprd,ums9230-1h10-go ("Spreadtrum
+# UMS9230-1H10-GO Board", model "ums9230 X6525"), read out of the dtbo
+# partition entry 18 that androidboot.dtbo_idx=18 selects.  This tree already
+# carries arch/arm64/boot/dts/sprd/ums9230-1h10_go-overlay.dts, so the stock
+# dtbo partition keeps working and boot.img only has to carry the kernel.
 #
 # The config is the unmodified 5.4 bg6_defconfig on purpose: kconfig drops
 # the symbols that no longer exist and takes 5.15 defaults for new ones, so
@@ -51,7 +56,9 @@ jobs:
           #   kmod        - depmod when modules are installed
           sudo apt-get install -y flex bison bc cpio libssl-dev libelf-dev \
             xz-utils zstd lz4 dwarves device-tree-compiler kmod \
-            libc6-dev-arm64-cross
+            libc6-dev-arm64-cross jq
+
+          # jq is for the Magisk release lookup in the boot.img stage.
 
       - name: Verify host tools
         run: |
@@ -95,6 +102,34 @@ jobs:
         with:
           name: kernel-Image-5.15-${{ github.sha }}
           path: out/arch/arm64/boot/Image
+          if-no-files-found: error
+
+      # boot-gsi.img is the stock X6525 boot image (header v4, 1.5 MB ramdisk,
+      # the "androidboot.verifiedbootstate=disabled buildvariant=userdebug
+      # androidboot.selinux=permissive kvm-arm.mode=nvhe" cmdline) whose kernel
+      # slot has been swapped before.  Repacking it with the 5.15 Image keeps
+      # the stock ramdisk and cmdline, so the result is flashable to boot_a on
+      # its own -- no need to rebuild the ramdisk.
+      - name: Pack boot.img (magiskboot)
+        run: |
+          curl -sSL -o /tmp/magisk.apk \
+            "$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+               | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' \
+               | head -1)"
+          unzip -o -j /tmp/magisk.apk 'lib/x86_64/libmagiskboot.so' -d /tmp
+          chmod +x /tmp/libmagiskboot.so
+          mkdir -p /tmp/bootwork && cd /tmp/bootwork
+          /tmp/libmagiskboot.so unpack "$GITHUB_WORKSPACE/boot-gsi.img"
+          cp "$GITHUB_WORKSPACE/out/arch/arm64/boot/Image" kernel
+          /tmp/libmagiskboot.so repack "$GITHUB_WORKSPACE/boot-gsi.img"
+          mv new-boot.img "$GITHUB_WORKSPACE/boot.img"
+          ls -la "$GITHUB_WORKSPACE/boot.img"
+
+      - name: Upload boot.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-5.15-${{ github.sha }}
+          path: boot.img
           if-no-files-found: error
 
       - name: Upload .config and configure log
