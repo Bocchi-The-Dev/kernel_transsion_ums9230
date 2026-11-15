@@ -50,16 +50,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # drivers/kernelsu is a symlink into the KernelSU submodule
-          # (backslashxx/KernelSU). Without this the link dangles and the build
+          # drivers/kernelsu is a symlink into the ReSukiSU submodule
+          # (ReSukiSU/ReSukiSU). Without this the link dangles and the build
           # dies with "drivers/kernelsu: No such file or directory".
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Expand KernelSU submodule history and tags
+      - name: Expand ReSukiSU submodule history and tags
         run: |
-          git -C KernelSU fetch --unshallow --tags
+          git -C ReSukiSU fetch --unshallow --tags
 
       - name: Install build dependencies
         run: |

@@ -352,6 +352,8 @@ SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 extern struct static_key_true ksu_su_compat_enabled;
 extern bool __ksu_is_allow_uid_for_current(uid_t uid);
 extern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
+#else
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
 #endif
 long do_faccessat(int dfd, const char __user *filename, int mode, int flags)
 {
@@ -432,6 +434,9 @@ orig_flow:
 	res = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
 	// no putname(fname) here as filename_lookup() has it done for us already;
 #else
+#ifdef CONFIG_KSU
+	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+#endif
 	res = user_path_at(dfd, filename, lookup_flags, &path);
 #endif
 	if (res)

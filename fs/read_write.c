@@ -26,7 +26,9 @@
 #include <asm/unistd.h>
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
+#endif
 
+#ifdef CONFIG_KSU
 extern struct static_key_true ksu_is_init_rc_hook_enabled;
 extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);
 #endif
@@ -609,7 +611,7 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU
 	if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))
 		ksu_handle_sys_read(fd, &buf, &count);
 #endif

@@ -1936,6 +1936,9 @@ extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 				void *envp, int *flags);
 extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
 				void *envp, int *flags, int *retval);
+#else
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags);
 #endif
 
 static int do_execveat_common(int fd, struct filename *filename,
@@ -1969,6 +1972,9 @@ orig_flow:
 	return retval;
 }
 #else
+#ifdef CONFIG_KSU
+	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+#endif
 	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
 #endif
 }

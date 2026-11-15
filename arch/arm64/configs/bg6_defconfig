@@ -6528,10 +6528,13 @@ CONFIG_CORESIGHT_STM=y
 # CONFIG_SPRD_SHARKL6PRO_CORESIGHT_PHY is not set
 # end of Coresight Physical Layer drivers
 # end of Kernel hacking
-# KernelSU (xxksu, backslashxx)
+# KernelSU (ReSukiSU)
 CONFIG_KSU=y
-CONFIG_KSU_ENABLE_FULL_UID_CHECKS=y
-CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y
+# CONFIG_KSU_DEBUG is not set
+CONFIG_KSU_MANUAL_HOOK=y
+# SUSFS is integrated but off by default: fs/susfs.c and the hook sites are
+# compiled in-tree, so switch CONFIG_KSU_SUSFS on to use the hiding features.
+# CONFIG_KSU_SUSFS is not set
 # cgroup v2
 #
 # There is no CONFIG_CGROUP2 in 5.4 and never was: the v2 (unified) hierarchy
