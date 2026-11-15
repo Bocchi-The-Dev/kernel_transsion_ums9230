@@ -1104,7 +1104,6 @@ static void bbr_check_ecn_too_high_in_startup(struct sock *sk, u32 ce_ratio)
 static int bbr_update_ecn_alpha(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	struct net *net = sock_net(sk);
 	struct bbr *bbr = inet_csk_ca(sk);
 	s32 delivered, delivered_ce;
 	u64 alpha, ce_ratio;
