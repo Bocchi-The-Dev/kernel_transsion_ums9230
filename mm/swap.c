@@ -568,6 +568,24 @@ void lru_cache_add(struct page *page)
 	put_cpu_var(lru_add_pvec);
 }
 EXPORT_SYMBOL(lru_cache_add);
+
+/*
+ * With LRU thrashing reclaim the pagevec helpers above are not built, but
+ * several callers (fuse, cifs, khugepaged, memory.c, shmem) still use the
+ * type-specific entry points. Under this config both simply queue the page
+ * like lru_cache_add(); file/anon placement happens at drain time.
+ */
+void lru_cache_add_anon(struct page *page)
+{
+	lru_cache_add(page);
+}
+EXPORT_SYMBOL(lru_cache_add_anon);
+
+void lru_cache_add_file(struct page *page)
+{
+	lru_cache_add(page);
+}
+EXPORT_SYMBOL(lru_cache_add_file);
 #endif
 
 /**

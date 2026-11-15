@@ -6209,10 +6209,10 @@ static void shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
 
 static void snapshot_refaults(struct mem_cgroup *root_memcg, pg_data_t *pgdat)
 {
+	struct mem_cgroup *memcg;
+
 	if (lru_gen_enabled())
 		return;
-
-	struct mem_cgroup *memcg;
 
 	memcg = mem_cgroup_iter(root_memcg, NULL, NULL);
 	do {
@@ -6575,12 +6575,12 @@ EXPORT_SYMBOL(try_to_free_mem_cgroup_pages);
 static void age_active_anon(struct pglist_data *pgdat,
 				struct scan_control *sc)
 {
+	struct mem_cgroup *memcg;
+
 	if (lru_gen_enabled()) {
 		lru_gen_age_node(pgdat, sc);
 		return;
 	}
-
-	struct mem_cgroup *memcg;
 
 	if (!total_swap_pages)
 		return;
