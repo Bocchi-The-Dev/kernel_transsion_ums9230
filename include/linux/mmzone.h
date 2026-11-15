@@ -18,7 +18,6 @@
 #include <linux/pageblock-flags.h>
 #include <linux/page-flags-layout.h>
 #include <linux/atomic.h>
-#include <linux/kfifo.h>
 #include <linux/mm_types.h>
 #include <linux/page-flags.h>
 #include <linux/android_kabi.h>
