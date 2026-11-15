@@ -329,7 +329,7 @@ int kcompressd(void *p)
 
 	while (!kthread_should_stop()) {
 		wait_event_interruptible(pgdat->kcompressd_wait,
-				!kfifo_is_empty(&pgdat->kcompress_fifo) ||
+				!kfifo_is_empty((struct kfifo *)pgdat->kcompress_fifo) ||
 				kthread_should_stop());
 
 		for (;;) {
