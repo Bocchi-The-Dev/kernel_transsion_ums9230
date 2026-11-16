@@ -4,6 +4,8 @@
 #include <linux/bits.h>
 #include <linux/bitops.h>
 #include <linux/bitmap.h>
+#include <linux/cred.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 
 /********/
