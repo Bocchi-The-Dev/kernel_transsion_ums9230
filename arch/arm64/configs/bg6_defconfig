@@ -6529,21 +6529,8 @@ CONFIG_CORESIGHT_STM=y
 # end of Coresight Physical Layer drivers
 # end of Kernel hacking
 # KernelSU (ReSukiSU)
-CONFIG_KSU=y
-# CONFIG_KSU_DEBUG is not set
-# KSU_SUSFS is a member of the KernelSU hooking-method choice, so it takes the
-# place of CONFIG_KSU_MANUAL_HOOK here; selecting both is a kconfig conflict.
-# Disabling SUSFS means switching to CONFIG_KSU_MANUAL_HOOK instead.
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SUS_MAP=y
+# CONFIG_KSU is not set
+
 # cgroup v2
 #
 # There is no CONFIG_CGROUP2 in 5.4 and never was: the v2 (unified) hierarchy
