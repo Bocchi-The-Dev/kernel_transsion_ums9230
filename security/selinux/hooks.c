@@ -105,7 +105,6 @@
 
 struct selinux_state selinux_state;
 #ifdef CONFIG_KSU_SUSFS
-extern struct selinux_state fake_state;
 extern bool ksu_selinux_hide_running __read_mostly;
 #endif // #ifdef CONFIG_KSU_SUSFS
 
@@ -6626,7 +6625,7 @@ static int my_setprocattr(const char *name, void *value, size_t size)
 			size--;
 		}
 
-		error = security_context_to_sid(&fake_state, value, size,
+		error = security_context_to_sid(&selinux_state, value, size,
 						&sid, GFP_KERNEL);
 		if (error)
 			return error;

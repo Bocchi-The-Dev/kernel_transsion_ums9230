@@ -45,18 +45,6 @@
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
 
-extern struct selinux_state fake_state;
-extern struct page *fake_status;
-extern struct static_key_false fake_status_initialize_key;
-extern bool ksu_selinux_hide_running __read_mostly;
-extern bool ksu_selinux_hide_enabled __read_mostly;
-extern void initialize_fake_status(void);
-#endif // #ifdef CONFIG_KSU_SUSFS
-
-#ifdef CONFIG_KSU_SUSFS
-#include <linux/susfs_def.h>
-
-extern struct selinux_state fake_state;
 extern struct page *fake_status;
 extern struct static_key_false fake_status_initialize_key;
 extern bool ksu_selinux_hide_running __read_mostly;
@@ -808,11 +796,11 @@ static ssize_t my_write_context(struct file *file, char *buf, size_t size)
 	if (length)
 		goto out;
 
-	length = security_context_to_sid(&fake_state, buf, size, &sid, GFP_KERNEL);
+	length = security_context_to_sid(&selinux_state, buf, size, &sid, GFP_KERNEL);
 	if (length)
 		goto out;
 
-	length = security_sid_to_context(&fake_state, sid, &canon, &len);
+	length = security_sid_to_context(&selinux_state, sid, &canon, &len);
 	if (length)
 		goto out;
 
@@ -1148,15 +1136,15 @@ static ssize_t my_write_access(struct file *file, char *buf, size_t size)
 	if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)
 		goto out;
 
-	length = security_context_str_to_sid(&fake_state, scon, &ssid, GFP_KERNEL);
+	length = security_context_str_to_sid(&selinux_state, scon, &ssid, GFP_KERNEL);
 	if (length)
 		goto out;
 
-	length = security_context_str_to_sid(&fake_state, tcon, &tsid, GFP_KERNEL);
+	length = security_context_str_to_sid(&selinux_state, tcon, &tsid, GFP_KERNEL);
 	if (length)
 		goto out;
 
-	security_compute_av_user(&fake_state, ssid, tsid, tclass, &avd);
+	security_compute_av_user(&selinux_state, ssid, tsid, tclass, &avd);
 
 	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
 			  "%x %x %x %x %u %x",
